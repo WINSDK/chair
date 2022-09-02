@@ -13,6 +13,12 @@
  * integrated GPU to use to run some physics calculations or other data. */
 
 typedef struct {
+    SDL_Window *window;
+    SDL_Renderer *renderer;
+
+} UI;
+
+typedef struct {
     /* */
     VkPresentModeKHR present_mode;
 
@@ -44,8 +50,11 @@ typedef struct {
 
 } RenderContext;
 
-bool vulkan_engine_create(RenderContext *context, SDL_Window *window);
-bool vulkan_engine_render();
-bool vulkan_engine_destroy();
+void vulkan_engine_create(RenderContext *context, SDL_Window *window);
+void vulkan_engine_render();
+void vulkan_engine_destroy();
+
+void sdl_renderer_create(UI *ui);
+void sdl_renderer_destroy(UI *ui);
 
 #endif // RENDER_H_

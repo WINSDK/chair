@@ -3,7 +3,6 @@
 
 #include <stdlib.h>
 #include <SDL2/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
 
 // !!! MacOS requires `VK_KHR_PORTABILITY_subset` to be set
 
@@ -16,7 +15,6 @@ const char** get_required_extensions(SDL_Window *window, u32 *count) {
     SDL_Vulkan_GetInstanceExtensions(window, count, NULL);
 
     const char **extensions = malloc((*count + 2) * sizeof(char*));
-
 #ifdef __APPLE__
     extensions[*count] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
     ++*count;
@@ -91,7 +89,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
     return VK_FALSE;
 }
 
-VkResult vulkan_engine_debugger(RenderContext *context) {
+VkResult vulkan_debugger_create(RenderContext *context) {
     if (get_log_level() < LOG_INFO) return VK_SUCCESS;
 
     VkDebugUtilsMessengerCreateInfoEXT create_info = {
@@ -114,7 +112,16 @@ VkResult vulkan_engine_debugger(RenderContext *context) {
     return fn(context->instance, &create_info, NULL, &context->messenger);
 }
 
-bool vulkan_engine_create(RenderContext *context, SDL_Window *window) {
+void vulkan_debugger_destroy(RenderContext *context) {
+    PFN_vkDestroyDebugUtilsMessengerEXT fn = (PFN_vkDestroyDebugUtilsMessengerEXT)(
+        vkGetInstanceProcAddr(context->instance, "vkDestroyDebugUtilsMessengerEXT")
+    );
+
+    if (fn == NULL) return error("failed to find `vkDestroyDebugUtilsMessengerEXT`");
+    fn(context->instance, context->messenger, NULL);
+}
+
+void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
     u32 ext_count = 0;
     const char** extensions = get_required_extensions(window, &ext_count);
 
@@ -153,21 +160,18 @@ bool vulkan_engine_create(RenderContext *context, SDL_Window *window) {
     if (vkCreateInstance(&create_info, NULL, &context->instance))
         panic("failed to create instance");
 
-    if (vulkan_engine_debugger(context))
+    if (vulkan_debugger_create(context))
         panic("failed to attach debugger");
 
     info("vulkan engine created");
-    return true;
 }
 
-bool vulkan_engine_destroy(RenderContext *context) {
+void vulkan_engine_destroy(RenderContext *context) {
+    vulkan_debugger_destroy(context);
     vkDestroyInstance(context->instance, NULL);
 
     info("vulkan engine destroyed");
-    return true;
 }
 
-bool vulkan_engine_render(RenderContext* context) {
-
-    return true;
+void vulkan_engine_render(RenderContext* context) {
 }
