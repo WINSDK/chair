@@ -4,7 +4,7 @@ LIBS = `pkg-config --libs --cflags sdl2` \
 	   `pkg-config --libs --cflags vulkan`
 
 LDFLAGS = -fuse-ld=lld -flto=thin
-CFLAGS  = -O2 -g -std=c11 -fwrapv \
+CFLAGS  = -march=native -O2 -g -std=c11 -fwrapv \
 		  -fno-strict-aliasing \
 		  -fno-delete-null-pointer-checks \
 		  -funsigned-char
@@ -30,7 +30,7 @@ configure:
 	@mkdir -p target
 
 run: $(TARGET)
-	@./$(TARGET)
+	@./$(TARGET) --trace
 
 clean:
 	rm -rf target compile_commands.json

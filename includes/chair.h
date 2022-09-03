@@ -22,6 +22,8 @@ void warn(const char *format, ...);
 void error(const char *format, ...);
 void panic(const char *format, ...);
 
+void trace_array(const char** msgs, int len, const char *format, ...);
+
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;

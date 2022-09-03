@@ -4,9 +4,9 @@
 
 #include "chair.h"
 
-static LogLevel LEVEL = LOG_INFO;
+static LogLevel LEVEL = LOG_WARN;
 
-LogLevel get_log_level() {
+inline LogLevel get_log_level() {
     return LEVEL;
 }
 
@@ -37,6 +37,30 @@ void trace(const char *format, ...) {
     va_start(ap, format);
     printf("[?] ");
     vprintf(format, ap);
+    putchar('\n');
+    fflush(stdout);
+    va_end(ap);
+}
+
+
+void trace_array(const char** msgs, int len, const char *format, ...) {
+    if (LEVEL < LOG_TRACE) {
+        return;
+    }
+
+    va_list ap;
+    va_start(ap, format);
+    printf("[?] ");
+    vprintf(format, ap);
+
+    printf("[");
+    for (u32 idx = 0; idx < len; idx++) {
+        if (idx == len - 1)
+            printf("%s]", msgs[idx]);
+        else
+            printf("%s, ", msgs[idx]);
+    }
+
     putchar('\n');
     fflush(stdout);
     va_end(ap);

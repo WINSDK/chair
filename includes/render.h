@@ -19,7 +19,7 @@ typedef struct {
 } UI;
 
 typedef struct {
-    /* */
+    /* Option for different types of vsync or none at all */
     VkPresentModeKHR present_mode;
 
     /* Interface to send images to the screen.
@@ -44,6 +44,9 @@ typedef struct {
 
     /* Data required for operating the swap chain */
     SwapChainDescriptor swapchain;
+
+    /* Interface for which to send command buffers to the GPU */
+    VkQueue queue;
 
     /* Images received from the swapchain */
     VkImage images[144];

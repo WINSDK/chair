@@ -23,9 +23,7 @@ const char** get_required_extensions(SDL_Window *window, u32 *count) {
     extensions[*count] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     ++*count;
 
-    for (u32 idx = 0; idx < *count; idx++)
-        trace("extension enabled: %s", extensions[idx]);
-
+    trace_array(extensions, *count, "extensions enabled: ");
     SDL_Vulkan_GetInstanceExtensions(window, count, extensions);
 
     return extensions;
@@ -38,11 +36,11 @@ const char** get_optional_extensions(u32 *count) {
     vkEnumerateInstanceExtensionProperties(NULL, count, extensions);
 
     const char** extensions_names = malloc(*count * sizeof(char*));
-
     for (u32 idx = 0; idx < *count; idx++) {
         extensions_names[idx] = extensions[idx].extensionName;
-        trace("available extension: %s", extensions[idx].extensionName);
     }
+
+    trace_array(extensions_names, *count, "available extensions: ");
 
     return extensions_names;
 }
@@ -188,12 +186,20 @@ bool matches_required_features(VkPhysicalDevice device) {
         "inheritedQueries",
     };
 
-    // enumerate each 32-bit feature flag of `VkPhysicalDeviceFeatures` struct
-    for (u32 idx = 0; idx < 55; idx++) {
-        u32 supported = ((u32*)(&features))[idx];
+    // enumerate each 32-bit feature flag of the `VkPhysicalDeviceFeatures` struct
+    if(get_log_level() == LOG_TRACE) {
+        const char** feature_names = malloc(55 * sizeof(char*));
 
-        if (supported) trace("feature supported: %s", feature_lookup[idx]);
+        u32 jdx = 0;
+        for (u32 idx = 0; idx < 55; idx++) {
+            u32 supported = ((u32*)(&features))[idx];
+
+            if (supported) feature_names[jdx++] = feature_lookup[idx];
+        }
+
+        trace_array(feature_names, jdx, "supported features: ");
     }
+
 
     return features.geometryShader;
 }
@@ -234,6 +240,24 @@ bool find_most_suitable_device(RenderContext *context,
     return false;
 }
 
+bool find_queue_families(VkPhysicalDevice device, u32* indices) {
+    u32 family_count;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, NULL);
+
+    VkQueueFamilyProperties* families = malloc(family_count * sizeof(VkQueueFamilyProperties));
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, families);
+
+    // find queue family that supports graphics
+    for (u32 idx = 0; idx < family_count; idx++) {
+        if (families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            *indices = idx;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
     u32 ext_count = 0;
     const char** extensions = get_required_extensions(window, &ext_count);
@@ -247,7 +271,7 @@ void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
         .apiVersion = VK_API_VERSION_1_3,
     };
 
-    VkInstanceCreateInfo create_info = {
+    VkInstanceCreateInfo instance_create_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
         .enabledExtensionCount = ext_count,
@@ -277,30 +301,63 @@ void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
         u32 layer_count;
         const char** names = get_layers(&layer_count);
 
-        create_info.enabledLayerCount = layer_count;
-        create_info.ppEnabledLayerNames = names;
+        instance_create_info.enabledLayerCount = layer_count;
+        instance_create_info.ppEnabledLayerNames = names;
 
         // attach debugger just for `vkDestroyInstance` and `vkCreateInstance`
-        create_info.pNext = &debug_create_info;
+        instance_create_info.pNext = &debug_create_info;
     }
 
     u32 opt_count;
     const char** opt_extensions = get_optional_extensions(&opt_count);
 
-    if (vkCreateInstance(&create_info, NULL, &context->instance))
+    if (vkCreateInstance(&instance_create_info, NULL, &context->instance))
         panic("failed to create instance");
 
     if (vulkan_debugger_create(context))
         panic("failed to attach debugger");
 
-    VkPhysicalDevice device;
-    if (!find_most_suitable_device(context, &device))
-        panic("failed to find suitable GPU");
+    if (!find_most_suitable_device(context, &context->device))
+        panic("failed to create device");
+
+    // find a simple queue that can handle at least graphics for now
+    u32 queue_family_indices;
+    if (!find_queue_families(context->device, &queue_family_indices))
+        panic("couldn't find any queue families");
+
+    // NOTE: can create multiple logical devices with different requirements
+    // for the same physical device
+
+    // a priority for scheduling command buffers between 0.0 and 1.0
+    f32 queue_priority = 1.0;
+
+    VkDeviceQueueCreateInfo queue_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = queue_family_indices,
+        .queueCount = 1,
+        .pQueuePriorities = &queue_priority,
+    };
+
+    // enable no device feature
+    VkPhysicalDeviceFeatures device_features = {};
+
+    VkDeviceCreateInfo device_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pQueueCreateInfos = &queue_create_info,
+        .queueCreateInfoCount = 1,
+        .pEnabledFeatures = &device_features,
+    };
+
+    if (vkCreateDevice(context->device, &device_create_info, NULL, &context->driver))
+        panic("failed to create driver");
+
+    vkGetDeviceQueue(context->driver, queue_family_indices, 0, &context->queue);
 
     info("vulkan engine created");
 }
 
 void vulkan_engine_destroy(RenderContext *context) {
+    vkDestroyDevice(context->driver, NULL);
     DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
     vkDestroyInstance(context->instance, NULL);
 
