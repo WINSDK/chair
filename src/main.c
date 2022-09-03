@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
 
     event_loop(&ui, &context);
 
-    vulkan_engine_destroy();
+    vulkan_engine_destroy(&context);
     sdl_renderer_destroy(&ui);
     
     return 0;

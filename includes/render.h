@@ -51,8 +51,8 @@ typedef struct {
 } RenderContext;
 
 void vulkan_engine_create(RenderContext *context, SDL_Window *window);
+void vulkan_engine_destroy(RenderContext *context);
 void vulkan_engine_render();
-void vulkan_engine_destroy();
 
 void sdl_renderer_create(UI *ui);
 void sdl_renderer_destroy(UI *ui);

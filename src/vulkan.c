@@ -70,28 +70,29 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
 
     switch (severity) {
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
-                trace("%s", callback_data->pMessage);
+                trace("vulkan: %s", callback_data->pMessage);
                 break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
-                info("%s", callback_data->pMessage);
+                info("vulkan: %s", callback_data->pMessage);
                 break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
-                warn("%s", callback_data->pMessage);
+                warn("vulkan: %s", callback_data->pMessage);
                 break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
-                error("%s", callback_data->pMessage);
+                error("vulkan: %s", callback_data->pMessage);
                 break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT:
-                panic("%s", callback_data->pMessage);
+                panic("vulkan: %s", callback_data->pMessage);
                 break;
     }
 
     return VK_FALSE;
 }
 
-VkResult vulkan_debugger_create(RenderContext *context) {
-    if (get_log_level() < LOG_INFO) return VK_SUCCESS;
+static PFN_vkCreateDebugUtilsMessengerEXT CreateDebugUtilsMessengerEXT;
+static PFN_vkDestroyDebugUtilsMessengerEXT DestroyDebugUtilsMessengerEXT;
 
+VkResult vulkan_debugger_create(RenderContext *context) {
     VkDebugUtilsMessengerCreateInfoEXT create_info = {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
         .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
@@ -104,21 +105,133 @@ VkResult vulkan_debugger_create(RenderContext *context) {
         .pUserData = NULL,
     };
 
-    PFN_vkCreateDebugUtilsMessengerEXT fn = (PFN_vkCreateDebugUtilsMessengerEXT)(
+    // find function loaded by `VK_EXT_DEBUG_UTILS_EXTENSION_NAME`
+    CreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT)(
         vkGetInstanceProcAddr(context->instance, "vkCreateDebugUtilsMessengerEXT")
     );
 
-    if (fn == NULL) return VK_ERROR_EXTENSION_NOT_PRESENT;
-    return fn(context->instance, &create_info, NULL, &context->messenger);
-}
-
-void vulkan_debugger_destroy(RenderContext *context) {
-    PFN_vkDestroyDebugUtilsMessengerEXT fn = (PFN_vkDestroyDebugUtilsMessengerEXT)(
+    // find function loaded by `VK_EXT_DEBUG_UTILS_EXTENSION_NAME`
+    DestroyDebugUtilsMessengerEXT = (PFN_vkDestroyDebugUtilsMessengerEXT)(
         vkGetInstanceProcAddr(context->instance, "vkDestroyDebugUtilsMessengerEXT")
     );
 
-    if (fn == NULL) return error("failed to find `vkDestroyDebugUtilsMessengerEXT`");
-    fn(context->instance, context->messenger, NULL);
+    if (CreateDebugUtilsMessengerEXT == NULL || DestroyDebugUtilsMessengerEXT == NULL)
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+
+    return CreateDebugUtilsMessengerEXT(
+        context->instance,
+        &create_info,
+        NULL,
+        &context->messenger
+    );
+}
+
+bool matches_required_features(VkPhysicalDevice device) {
+    VkPhysicalDeviceFeatures features;
+    vkGetPhysicalDeviceFeatures(device, &features);
+
+    const char* feature_lookup[55] = {
+        "robustBufferAccess",
+        "fullDrawIndexUint32",
+        "imageCubeArray",
+        "independentBlend",
+        "geometryShader",
+        "tessellationShader",
+        "sampleRateShading",
+        "dualSrcBlend",
+        "logicOp",
+        "multiDrawIndirect",
+        "drawIndirectFirstInstance",
+        "depthClamp",
+        "depthBiasClamp",
+        "fillModeNonSolid",
+        "depthBounds",
+        "wideLines",
+        "largePoints",
+        "alphaToOne",
+        "multiViewport",
+        "samplerAnisotropy",
+        "textureCompressionETC2",
+        "textureCompressionASTC_LDR",
+        "textureCompressionBC",
+        "occlusionQueryPrecise",
+        "pipelineStatisticsQuery",
+        "vertexPipelineStoresAndAtomics",
+        "fragmentStoresAndAtomics",
+        "shaderTessellationAndGeometryPointSize",
+        "shaderImageGatherExtended",
+        "shaderStorageImageExtendedFormats",
+        "shaderStorageImageMultisample",
+        "shaderStorageImageReadWithoutFormat",
+        "shaderStorageImageWriteWithoutFormat",
+        "shaderUniformBufferArrayDynamicIndexing",
+        "shaderSampledImageArrayDynamicIndexing",
+        "shaderStorageBufferArrayDynamicIndexing",
+        "shaderStorageImageArrayDynamicIndexing",
+        "shaderClipDistance",
+        "shaderCullDistance",
+        "shaderFloat64",
+        "shaderInt64",
+        "shaderInt16",
+        "shaderResourceResidency",
+        "shaderResourceMinLod",
+        "sparseBinding",
+        "sparseResidencyBuffer",
+        "sparseResidencyImage2D",
+        "sparseResidencyImage3D",
+        "sparseResidency2Samples",
+        "sparseResidency4Samples",
+        "sparseResidency8Samples",
+        "sparseResidency16Samples",
+        "sparseResidencyAliased",
+        "variableMultisampleRate",
+        "inheritedQueries",
+    };
+
+    // enumerate each 32-bit feature flag of `VkPhysicalDeviceFeatures` struct
+    for (u32 idx = 0; idx < 55; idx++) {
+        u32 supported = ((u32*)(&features))[idx];
+
+        if (supported) trace("feature supported: %s", feature_lookup[idx]);
+    }
+
+    return features.geometryShader;
+}
+
+bool find_most_suitable_device(RenderContext *context,
+                               VkPhysicalDevice *device) {
+    u32 device_count;
+    vkEnumeratePhysicalDevices(context->instance, &device_count, NULL);
+
+    if (device_count == 0) return false;
+
+    VkPhysicalDevice* devices = malloc(device_count * sizeof(VkPhysicalDevice));
+    vkEnumeratePhysicalDevices(context->instance, &device_count, devices);
+
+    // try to find a discrete GPU with the required features
+    VkPhysicalDeviceProperties properties;
+    for (u32 idx = 0; idx < device_count; idx++) {
+        vkGetPhysicalDeviceProperties(devices[idx], &properties);
+
+        trace("GPU: %s", properties.deviceName);
+
+        if (properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+            if (matches_required_features(devices[idx])) {
+                *device = devices[idx];
+                return true;
+            }
+        }
+    }
+
+    // try to find any GPU with the required features
+    for (u32 idx = 0; idx < device_count; idx++) {
+        if (matches_required_features(devices[idx])) {
+            *device = devices[idx];
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
@@ -142,16 +255,33 @@ void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
     };
 
 #ifdef __APPLE__
-    create_info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+    create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 #endif
 
-    // enable all supported layers when debugging 
+    VkDebugUtilsMessengerCreateInfoEXT debug_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+
+        .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                           VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | 
+                           VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+
+        .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                       VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                       VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+
+        .pfnUserCallback = vulkan_debug_handler,
+    };
+
     if (get_log_level() >= LOG_INFO) {
+        // enable all supported layers when for debugging
         u32 layer_count;
         const char** names = get_layers(&layer_count);
 
         create_info.enabledLayerCount = layer_count;
         create_info.ppEnabledLayerNames = names;
+
+        // attach debugger just for `vkDestroyInstance` and `vkCreateInstance`
+        create_info.pNext = &debug_create_info;
     }
 
     u32 opt_count;
@@ -163,11 +293,15 @@ void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
     if (vulkan_debugger_create(context))
         panic("failed to attach debugger");
 
+    VkPhysicalDevice device;
+    if (!find_most_suitable_device(context, &device))
+        panic("failed to find suitable GPU");
+
     info("vulkan engine created");
 }
 
 void vulkan_engine_destroy(RenderContext *context) {
-    vulkan_debugger_destroy(context);
+    DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
     vkDestroyInstance(context->instance, NULL);
 
     info("vulkan engine destroyed");
