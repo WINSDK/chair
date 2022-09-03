@@ -14,14 +14,13 @@ void swap_chain_create(SwapChainDescriptor *desc) {
 const char** get_required_extensions(SDL_Window *window, u32 *count) {
     SDL_Vulkan_GetInstanceExtensions(window, count, NULL);
 
-    const char **extensions = malloc((*count + 3) * sizeof(char*));
+    const char **extensions = malloc((*count + 2) * sizeof(char*));
     SDL_Vulkan_GetInstanceExtensions(window, count, extensions);
 
 #ifdef __APPLE__
     extensions[(*count)++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
 #endif
     extensions[(*count)++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
-    extensions[(*count)++] = VK_KHR_SURFACE_EXTENSION_NAME;
 
     trace_array(extensions, *count, "extensions enabled: ");
 

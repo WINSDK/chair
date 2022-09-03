@@ -11,11 +11,11 @@ void sdl_renderer_create(UI *ui) {
 
     ui->window = SDL_CreateWindow(
         app_name,
-        SDL_WINDOW_VULKAN,
-        SDL_WINDOW_VULKAN,
+        0,
+        0,
         displayInfo.w / 2,
         displayInfo.h / 2,
-        0
+        SDL_WINDOW_VULKAN | SDL_WINDOW_ALLOW_HIGHDPI
     );
 
     ui->renderer = SDL_CreateRenderer(
