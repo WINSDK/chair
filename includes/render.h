@@ -19,17 +19,6 @@ typedef struct {
 } UI;
 
 typedef struct {
-    /* Option for different types of vsync or none at all */
-    VkPresentModeKHR present_mode;
-
-    /* Interface to send images to the screen.
-     * List of images, accessible by the operating system for display */
-    VkSwapchainKHR swapchain;
-
-
-} SwapChainDescriptor;
-
-typedef struct {
     /* Vulkan API Context */
     VkInstance instance;
 
@@ -42,11 +31,21 @@ typedef struct {
     /* GPU driver on the GPU hardware */
     VkDevice driver;
 
-    /* Data required for operating the swap chain */
-    SwapChainDescriptor swapchain;
-
     /* Interface for which to send command buffers to the GPU */
     VkQueue queue;
+
+    /* */
+    VkQueue present_queue;
+
+    /* Option for different types of vsync or none at all */
+    VkPresentModeKHR present_mode;
+
+    /* Abstraction of platform specific window interactions */
+    VkSurfaceKHR surface;
+
+    /* Interface to send images to the screen.
+     * List of images, accessible by the operating system for display */
+    VkSwapchainKHR swapchain;
 
     /* Images received from the swapchain */
     VkImage images[144];

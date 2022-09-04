@@ -3,13 +3,7 @@
 
 #include <stdlib.h>
 #include <SDL2/SDL_vulkan.h>
-
-// !!! MacOS requires `VK_KHR_PORTABILITY_subset` to be set
-
-void swap_chain_create(SwapChainDescriptor *desc) {
-    // adaptive vsync preset
-    desc->present_mode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
-}
+#include <vulkan/vulkan_core.h>
 
 const char** get_required_extensions(SDL_Window *window, u32 *count) {
     SDL_Vulkan_GetInstanceExtensions(window, count, NULL);
@@ -17,6 +11,7 @@ const char** get_required_extensions(SDL_Window *window, u32 *count) {
     const char **extensions = malloc((*count + 2) * sizeof(char*));
     SDL_Vulkan_GetInstanceExtensions(window, count, extensions);
 
+    // MacOS requires the `VK_KHR_PORTABILITY_subset` extension
 #ifdef __APPLE__
     extensions[(*count)++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
 #endif
@@ -238,7 +233,7 @@ bool find_most_suitable_device(RenderContext *context,
     return false;
 }
 
-bool find_queue_families(VkPhysicalDevice device, u32* indices) {
+bool find_queue_families(VkPhysicalDevice device, u32 *indices) {
     u32 family_count;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, NULL);
 
@@ -254,6 +249,72 @@ bool find_queue_families(VkPhysicalDevice device, u32* indices) {
     }
 
     return false;
+}
+
+/// present_mode takes a ref to a preferred mode and either does nothing
+/// or changes the present mode to one that's supported
+bool try_preferred_present_mode(RenderContext *context,
+                                VkPresentModeKHR *preferred_present_mode) {
+    u32 count = 0;
+    VkResult present_support_result;
+    present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
+        context->device,
+        context->surface,
+        &count,
+        NULL
+    );
+
+    VkPresentModeKHR* present_modes = malloc(count * sizeof(VkPresentModeKHR*));
+    present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
+        context->device,
+        context->surface,
+        &count,
+        present_modes
+    );
+
+    if (present_support_result)
+        return false;
+
+    if (count == 0)
+        return false;
+
+    // do nothing if the `preferred_present_mode` is supported
+    for (u32 idx = 0; idx < count; idx++)
+        if (present_modes[idx] == *preferred_present_mode) return true;
+
+    if (get_log_level() == LOG_TRACE) {
+        const char** names = malloc(count * sizeof(char*));
+
+        for (u32 idx = 0; idx < count; idx++) {
+            switch (present_modes[idx]) {
+                case VK_PRESENT_MODE_IMMEDIATE_KHR:
+                    names[idx] = "VK_PRESENT_MODE_IMMEDIATE_KHR";
+                    break;
+                case VK_PRESENT_MODE_MAILBOX_KHR:
+                    names[idx] = "VK_PRESENT_MODE_MAILBOX_KHR";
+                    break;
+                case VK_PRESENT_MODE_FIFO_KHR:
+                    names[idx] = "VK_PRESENT_MODE_FIFO_KHR";
+                    break;
+                case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+                    names[idx] = "VK_PRESENT_MODE_FIFO_RELAXED_KHR";
+                    break;
+                case VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR:
+                    names[idx] = "VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR";
+                    break;
+                case VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR:
+                    names[idx] = "VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR";
+                    break;
+                case VK_PRESENT_MODE_MAX_ENUM_KHR:
+                    names[idx] = "VK_PRESENT_MODE_MAX_ENUM_KHR";
+                    break;
+            }
+        }
+
+        trace_array(names, count, "supported present modes: ");
+    }
+
+    return present_modes[0];
 }
 
 void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
@@ -319,8 +380,8 @@ void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
         panic("failed to create device");
 
     // find a simple queue that can handle at least graphics for now
-    u32 queue_family_indices;
-    if (!find_queue_families(context->device, &queue_family_indices))
+    u32 queue_family_idx;
+    if (!find_queue_families(context->device, &queue_family_idx))
         panic("couldn't find any queue families");
 
     // NOTE: can create multiple logical devices with different requirements
@@ -331,7 +392,7 @@ void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
 
     VkDeviceQueueCreateInfo queue_create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = queue_family_indices,
+        .queueFamilyIndex = queue_family_idx,
         .queueCount = 1,
         .pQueuePriorities = &queue_priority,
     };
@@ -349,13 +410,36 @@ void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
     if (vkCreateDevice(context->device, &device_create_info, NULL, &context->driver))
         panic("failed to create driver");
 
-    vkGetDeviceQueue(context->driver, queue_family_indices, 0, &context->queue);
+    vkGetDeviceQueue(context->driver, queue_family_idx, 0, &context->queue);
+
+    if (!SDL_Vulkan_CreateSurface(window, context->instance, &context->surface))
+        panic("failed to create surface");
+
+    context->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+    if (!try_preferred_present_mode(context, &context->present_mode))
+        panic("failed to find any present mode");
+
+    // NOTE: for now the present_queue and queue will be the same
+    VkBool32 surface_supported = false;
+    VkResult surface_support_result = vkGetPhysicalDeviceSurfaceSupportKHR(
+        context->device,
+        queue_family_idx,
+        context->surface,
+        &surface_supported
+    );
+
+    if (!(surface_supported && surface_support_result == VK_SUCCESS))
+        panic("selected queue doesn't support required surface");
+
+    vkGetDeviceQueue(context->driver, queue_family_idx, 0, &context->present_queue);
 
     info("vulkan engine created");
 }
 
+// NOTE: layers appear to be unloading twice
 void vulkan_engine_destroy(RenderContext *context) {
     vkDestroyDevice(context->driver, NULL);
+    vkDestroySurfaceKHR(context->instance, context->surface, NULL);
     DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
     vkDestroyInstance(context->instance, NULL);
 
