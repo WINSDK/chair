@@ -5,7 +5,7 @@
 #include <assert.h>
 #include <stdlib.h>
 
-void event_loop(UI *ui, RenderContext *context) {
+void event_loop(RenderContext *context) {
     bool quit = false;
     SDL_Event event;
 
@@ -14,7 +14,7 @@ void event_loop(UI *ui, RenderContext *context) {
             if (event.type == SDL_QUIT) return;
         }
 
-        vulkan_engine_render();
+        vulkan_engine_render(context);
     }
 
     return;
@@ -33,16 +33,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    UI ui;
-    sdl_renderer_create(&ui);
-
     RenderContext context;
-    vulkan_engine_create(&context, ui.window);
 
-    event_loop(&ui, &context);
-
+    sdl_renderer_create(&context);
+    vulkan_engine_create(&context);
+    event_loop(&context);
     vulkan_engine_destroy(&context);
-    sdl_renderer_destroy(&ui);
+    sdl_renderer_destroy(&context);
     
     return 0;
 }

@@ -14,12 +14,6 @@
  * your main dedicated GPU for the actual graphics, but keep a VkDevice for the
  * integrated GPU to use to run some physics calculations or other data. */
 
-// TODO: move this to the `RenderContext`
-typedef struct {
-    SDL_Window *window;
-    SDL_Renderer *renderer;
-} UI;
-
 typedef struct {
     /* Basic surface capabilities */
     VkSurfaceCapabilitiesKHR capabilities;
@@ -36,6 +30,12 @@ typedef struct {
 } SwapChainDescriptor;
 
 typedef struct {
+    /* SDL application state */
+    SDL_Window *window;
+
+    /* SDL render related state */
+    SDL_Renderer *renderer;
+
     /* Vulkan API Context */
     VkInstance instance;
 
@@ -67,11 +67,11 @@ typedef struct {
     VkImage images[144];
 } RenderContext;
 
-void vulkan_engine_create(RenderContext *context, SDL_Window *window);
+void vulkan_engine_create(RenderContext *context);
 void vulkan_engine_destroy(RenderContext *context);
-void vulkan_engine_render();
+void vulkan_engine_render(RenderContext *context);
 
-void sdl_renderer_create(UI *ui);
-void sdl_renderer_destroy(UI *ui);
+void sdl_renderer_create(RenderContext *context);
+void sdl_renderer_destroy(RenderContext *context);
 
 #endif // RENDER_H_

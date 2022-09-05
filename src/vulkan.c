@@ -166,13 +166,13 @@ bool try_preferred_present_mode(RenderContext *context,
 
 /// Find a queue family that supports graphics.
 bool find_queue_families(VkPhysicalDevice device, u32 *indices) {
-    u32 family_count;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, NULL);
+    u32 count;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, NULL);
 
-    VkQueueFamilyProperties* families = malloc(family_count * sizeof(VkQueueFamilyProperties));
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, families);
+    VkQueueFamilyProperties* families = malloc(count * sizeof(VkQueueFamilyProperties));
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, families);
 
-    for (u32 idx = 0; idx < family_count; idx++) {
+    for (u32 idx = 0; idx < count; idx++) {
         if (families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
             *indices = idx;
             return true;
@@ -285,7 +285,7 @@ bool vulkan_create_swapchain(RenderContext *context) {
 }
 
 // Try to create a device, associated queue, present queue and surface.
-bool vulkan_create_device(RenderContext *context, SDL_Window *window) {
+bool vulkan_create_device(RenderContext *context) {
     // find a simple queue that can handle at least graphics for now
     u32 queue_family_idx;
     if (!find_queue_families(context->device, &queue_family_idx)) {
@@ -329,7 +329,7 @@ bool vulkan_create_device(RenderContext *context, SDL_Window *window) {
 
     vkGetDeviceQueue(context->driver, queue_family_idx, 0, &context->queue);
 
-    if (!SDL_Vulkan_CreateSurface(window, context->instance, &context->surface)) {
+    if (!SDL_Vulkan_CreateSurface(context->window, context->instance, &context->surface)) {
         warn("failed to create surface");
         return false;
     }
@@ -359,7 +359,7 @@ bool vulkan_create_device(RenderContext *context, SDL_Window *window) {
 
 /// Try to setup a device that supports the required
 /// features, extensions and swapchain.
-bool create_most_suitable_device(RenderContext *context, SDL_Window *window) {
+bool create_most_suitable_device(RenderContext *context) {
     u32 device_count;
     vkEnumeratePhysicalDevices(context->instance, &device_count, NULL);
 
@@ -384,7 +384,7 @@ bool create_most_suitable_device(RenderContext *context, SDL_Window *window) {
         if (!matches_device_requirements(context->device))
             continue;
 
-        if (!vulkan_create_device(context, window))
+        if (!vulkan_create_device(context))
             continue;
 
         if (!vulkan_create_swapchain(context))
@@ -409,7 +409,7 @@ bool create_most_suitable_device(RenderContext *context, SDL_Window *window) {
         if (!matches_device_requirements(context->device))
             continue;
 
-        if (!vulkan_create_device(context, window))
+        if (!vulkan_create_device(context))
             continue;
 
         if (!vulkan_create_swapchain(context))
@@ -424,9 +424,9 @@ bool create_most_suitable_device(RenderContext *context, SDL_Window *window) {
     return false;
 }
 
-bool vulkan_instance_create(RenderContext *context, SDL_Window *window) {
+bool vulkan_instance_create(RenderContext *context) {
     u32 ext_count = 0;
-    const char** extensions = get_required_extensions(window, &ext_count);
+    const char** extensions = get_required_extensions(context->window, &ext_count);
 
     VkApplicationInfo app_info = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -484,14 +484,14 @@ bool vulkan_instance_create(RenderContext *context, SDL_Window *window) {
     return true;
 }
 
-void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
-    if (!vulkan_instance_create(context, window))
+void vulkan_engine_create(RenderContext *context) {
+    if (!vulkan_instance_create(context))
         panic("failed to create instance");
 
     if (vulkan_debugger_create(context))
         panic("failed to attach debugger");
 
-    if (!create_most_suitable_device(context, window))
+    if (!create_most_suitable_device(context))
         panic("failed to setup any GPU");
 
     info("vulkan engine created");
