@@ -1,23 +1,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdnoreturn.h>
+#include <stdatomic.h>
 
 #include "chair.h"
 
-static LogLevel LEVEL = LOG_WARN;
+static atomic_uint LEVEL = LOG_WARN;
 
 inline LogLevel get_log_level() {
-    return LEVEL;
+    return atomic_load(&LEVEL);
 }
 
-void set_log_level(LogLevel level) {
-    LEVEL = level;
+inline void set_log_level(LogLevel level) {
+    atomic_store(&LEVEL, level);
 }
 
 void info(const char *format, ...) {
-    if (LEVEL < LOG_INFO) {
-        return;
-    }
+    if (get_log_level() < LOG_INFO) return;
 
     va_list ap;
     va_start(ap, format);
@@ -29,9 +28,7 @@ void info(const char *format, ...) {
 }
 
 void trace(const char *format, ...) {
-    if (LEVEL < LOG_TRACE) {
-        return;
-    }
+    if (get_log_level() < LOG_TRACE) return;
 
     va_list ap;
     va_start(ap, format);
@@ -44,9 +41,7 @@ void trace(const char *format, ...) {
 
 
 void trace_array(const char** msgs, int len, const char *format, ...) {
-    if (LEVEL < LOG_TRACE) {
-        return;
-    }
+    if (get_log_level() < LOG_TRACE) return;
 
     va_list ap;
     va_start(ap, format);
@@ -67,9 +62,7 @@ void trace_array(const char** msgs, int len, const char *format, ...) {
 }
 
 void warn(const char *format, ...) {
-    if (LEVEL < LOG_WARN) {
-        return;
-    }
+    if (get_log_level() < LOG_WARN) return;
 
     va_list ap;
     va_start(ap, format);
