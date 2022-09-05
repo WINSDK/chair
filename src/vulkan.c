@@ -1,4 +1,3 @@
-#include "chair.h"
 #include "render.h"
 
 #include <stdlib.h>
@@ -29,9 +28,8 @@ const char** get_optional_extensions(u32 *count) {
     vkEnumerateInstanceExtensionProperties(NULL, count, extensions);
 
     const char** extensions_names = malloc(*count * sizeof(char*));
-    for (u32 idx = 0; idx < *count; idx++) {
+    for (u32 idx = 0; idx < *count; idx++)
         extensions_names[idx] = extensions[idx].extensionName;
-    }
 
     trace_array(extensions_names, *count, "available extensions: ");
 
@@ -45,12 +43,143 @@ const char** get_layers(u32 *count) {
     vkEnumerateInstanceLayerProperties(count, layers);
 
     const char** layer_names = malloc(*count * sizeof(char*));
-    for (u32 idx = 0; idx < *count; idx++) {
+    for (u32 idx = 0; idx < *count; idx++)
         layer_names[idx] = layers[idx].layerName;
-        trace("layer enabled: %s", layers[idx].layerName);
-    }
+
+    trace_array(layer_names, *count, "layers enabled: ");
 
     return layer_names;
+}
+
+bool matches_device_requirements(VkPhysicalDevice device) {
+    VkPhysicalDeviceFeatures features;
+    vkGetPhysicalDeviceFeatures(device, &features);
+
+    u32 count;
+    VkResult extension_result;
+    extension_result = vkEnumerateDeviceExtensionProperties(
+        device,
+        NULL,
+        &count,
+        NULL
+    );
+
+    VkExtensionProperties* extensions = malloc(count * sizeof(VkExtensionProperties));
+    extension_result = vkEnumerateDeviceExtensionProperties(
+        device,
+        NULL,
+        &count,
+        extensions
+    );
+
+    if (extension_result)
+        return false;
+
+    bool required_extensions_found = false;
+    for (u32 idx = 0; idx < count; idx++) {
+        const char* name = extensions[idx].extensionName;
+
+        if (strcmp(name, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
+            required_extensions_found = true;
+    }
+
+    if (!required_extensions_found)
+        return false;
+
+    if (get_log_level() == LOG_TRACE) {
+        const char** extension_names = malloc(count * sizeof(char*));
+
+        for (u32 idx = 0; idx < count; idx++)
+            extension_names[idx] = extensions[idx].extensionName;
+
+        trace_array(extension_names, count, "available device extensions: ");
+    }
+
+    return features.geometryShader;
+}
+
+/// Present_mode takes a ref to a preferred mode and either does nothing
+/// or changes the present mode to one that's supported.
+bool try_preferred_present_mode(RenderContext *context,
+                                VkPresentModeKHR *preferred_present_mode) {
+    u32 count = 0;
+    VkResult present_support_result;
+    present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
+        context->device,
+        context->surface,
+        &count,
+        NULL
+    );
+
+    VkPresentModeKHR* present_modes = malloc(count * sizeof(VkPresentModeKHR*));
+    present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
+        context->device,
+        context->surface,
+        &count,
+        present_modes
+    );
+
+    if (present_support_result)
+        return false;
+
+    if (count == 0)
+        return false;
+
+    // do nothing if the `preferred_present_mode` is supported
+    for (u32 idx = 0; idx < count; idx++)
+        if (present_modes[idx] == *preferred_present_mode) return true;
+
+    if (get_log_level() == LOG_TRACE) {
+        const char** names = malloc(count * sizeof(char*));
+
+        for (u32 idx = 0; idx < count; idx++) {
+            switch (present_modes[idx]) {
+                case VK_PRESENT_MODE_IMMEDIATE_KHR:
+                    names[idx] = "VK_PRESENT_MODE_IMMEDIATE_KHR";
+                    break;
+                case VK_PRESENT_MODE_MAILBOX_KHR:
+                    names[idx] = "VK_PRESENT_MODE_MAILBOX_KHR";
+                    break;
+                case VK_PRESENT_MODE_FIFO_KHR:
+                    names[idx] = "VK_PRESENT_MODE_FIFO_KHR";
+                    break;
+                case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+                    names[idx] = "VK_PRESENT_MODE_FIFO_RELAXED_KHR";
+                    break;
+                case VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR:
+                    names[idx] = "VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR";
+                    break;
+                case VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR:
+                    names[idx] = "VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR";
+                    break;
+                case VK_PRESENT_MODE_MAX_ENUM_KHR:
+                    names[idx] = "VK_PRESENT_MODE_MAX_ENUM_KHR";
+                    break;
+            }
+        }
+
+        trace_array(names, count, "supported present modes: ");
+    }
+
+    return present_modes[0];
+}
+
+/// Find a queue family that supports graphics.
+bool find_queue_families(VkPhysicalDevice device, u32 *indices) {
+    u32 family_count;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, NULL);
+
+    VkQueueFamilyProperties* families = malloc(family_count * sizeof(VkQueueFamilyProperties));
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, families);
+
+    for (u32 idx = 0; idx < family_count; idx++) {
+        if (families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            *indices = idx;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
@@ -117,88 +246,120 @@ VkResult vulkan_debugger_create(RenderContext *context) {
     );
 }
 
-bool matches_required_features(VkPhysicalDevice device) {
-    VkPhysicalDeviceFeatures features;
-    vkGetPhysicalDeviceFeatures(device, &features);
+/// Try to create a swapchain with at least one format.
+bool vulkan_create_swapchain(RenderContext *context) {
+    SwapChainDescriptor* chain = &context->swapchain;
 
-    const char* feature_lookup[55] = {
-        "robustBufferAccess",
-        "fullDrawIndexUint32",
-        "imageCubeArray",
-        "independentBlend",
-        "geometryShader",
-        "tessellationShader",
-        "sampleRateShading",
-        "dualSrcBlend",
-        "logicOp",
-        "multiDrawIndirect",
-        "drawIndirectFirstInstance",
-        "depthClamp",
-        "depthBiasClamp",
-        "fillModeNonSolid",
-        "depthBounds",
-        "wideLines",
-        "largePoints",
-        "alphaToOne",
-        "multiViewport",
-        "samplerAnisotropy",
-        "textureCompressionETC2",
-        "textureCompressionASTC_LDR",
-        "textureCompressionBC",
-        "occlusionQueryPrecise",
-        "pipelineStatisticsQuery",
-        "vertexPipelineStoresAndAtomics",
-        "fragmentStoresAndAtomics",
-        "shaderTessellationAndGeometryPointSize",
-        "shaderImageGatherExtended",
-        "shaderStorageImageExtendedFormats",
-        "shaderStorageImageMultisample",
-        "shaderStorageImageReadWithoutFormat",
-        "shaderStorageImageWriteWithoutFormat",
-        "shaderUniformBufferArrayDynamicIndexing",
-        "shaderSampledImageArrayDynamicIndexing",
-        "shaderStorageBufferArrayDynamicIndexing",
-        "shaderStorageImageArrayDynamicIndexing",
-        "shaderClipDistance",
-        "shaderCullDistance",
-        "shaderFloat64",
-        "shaderInt64",
-        "shaderInt16",
-        "shaderResourceResidency",
-        "shaderResourceMinLod",
-        "sparseBinding",
-        "sparseResidencyBuffer",
-        "sparseResidencyImage2D",
-        "sparseResidencyImage3D",
-        "sparseResidency2Samples",
-        "sparseResidency4Samples",
-        "sparseResidency8Samples",
-        "sparseResidency16Samples",
-        "sparseResidencyAliased",
-        "variableMultisampleRate",
-        "inheritedQueries",
-    };
+    VkResult surface_capabilities_fail = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+        context->device,
+        context->surface,
+        &chain->capabilities
+    );
 
-    // enumerate each 32-bit feature flag of the `VkPhysicalDeviceFeatures` struct
-    if(get_log_level() == LOG_TRACE) {
-        const char** feature_names = malloc(55 * sizeof(char*));
+    if (surface_capabilities_fail)
+        return false;
 
-        u32 jdx = 0;
-        for (u32 idx = 0; idx < 55; idx++) {
-            u32 supported = ((u32*)(&features))[idx];
+    VkResult surface_formats_fail;
+    surface_formats_fail = vkGetPhysicalDeviceSurfaceFormatsKHR(
+        context->device,
+        context->surface,
+        &chain->format_count,
+        NULL
+    );
 
-            if (supported) feature_names[jdx++] = feature_lookup[idx];
-        }
+    if (chain->format_count == 0 || surface_formats_fail)
+        return false;
 
-        trace_array(feature_names, jdx, "supported features: ");
-    }
+    chain->formats = malloc(chain->format_count * sizeof(VkSurfaceFormatKHR));
+    surface_formats_fail = vkGetPhysicalDeviceSurfaceFormatsKHR(
+        context->device,
+        context->surface,
+        &chain->format_count,
+        chain->formats
+    );
 
+    if (surface_formats_fail)
+        return false;
 
-    return features.geometryShader;
+    return true;
 }
 
-bool find_most_suitable_device(RenderContext *context,
-                               VkPhysicalDevice *device) {
+// Try to create a device, associated queue, present queue and surface.
+bool vulkan_create_device(RenderContext *context, SDL_Window *window) {
+    // find a simple queue that can handle at least graphics for now
+    u32 queue_family_idx;
+    if (!find_queue_families(context->device, &queue_family_idx)) {
+        warn("couldn't find any queue families");
+        return false;
+    }
+
+    // NOTE: can create multiple logical devices with different requirements
+    // for the same physical device
+
+    // a priority for scheduling command buffers between 0.0 and 1.0
+    f32 queue_priority = 1.0;
+
+    VkDeviceQueueCreateInfo queue_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = queue_family_idx,
+        .queueCount = 1,
+        .pQueuePriorities = &queue_priority,
+    };
+
+    const char* device_extensions[1] = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    };
+
+    // enable no device feature
+    VkPhysicalDeviceFeatures device_features = {};
+
+    VkDeviceCreateInfo device_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pQueueCreateInfos = &queue_create_info,
+        .queueCreateInfoCount = 1,
+        .pEnabledFeatures = &device_features,
+        .enabledExtensionCount = 1,
+        .ppEnabledExtensionNames = device_extensions,
+    };
+
+    if (vkCreateDevice(context->device, &device_create_info, NULL, &context->driver)) {
+        warn("failed to create driver");
+        return false;
+    }
+
+    vkGetDeviceQueue(context->driver, queue_family_idx, 0, &context->queue);
+
+    if (!SDL_Vulkan_CreateSurface(window, context->instance, &context->surface)) {
+        warn("failed to create surface");
+        return false;
+    }
+
+    context->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+    if (!try_preferred_present_mode(context, &context->present_mode)) {
+        warn("failed to find any present mode");
+        return false;
+    }
+
+    // NOTE: for now the present_queue and queue will be the same
+    VkBool32 surface_supported = false;
+    VkResult surface_support_fail = vkGetPhysicalDeviceSurfaceSupportKHR(
+        context->device,
+        queue_family_idx,
+        context->surface,
+        &surface_supported
+    );
+
+    if (!surface_supported || surface_support_fail) {
+        warn("selected queue doesn't support required surface");
+        return false;
+    }
+
+    return true;
+}
+
+/// Try to setup a device that supports the required
+/// features, extensions and swapchain.
+bool create_most_suitable_device(RenderContext *context, SDL_Window *window) {
     u32 device_count;
     vkEnumeratePhysicalDevices(context->instance, &device_count, NULL);
 
@@ -207,117 +368,63 @@ bool find_most_suitable_device(RenderContext *context,
     VkPhysicalDevice* devices = malloc(device_count * sizeof(VkPhysicalDevice));
     vkEnumeratePhysicalDevices(context->instance, &device_count, devices);
 
-    // try to find a discrete GPU with the required features
+    VkPhysicalDeviceType preferred_device = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+
+    // try to find a discrete GPU
     VkPhysicalDeviceProperties properties;
     for (u32 idx = 0; idx < device_count; idx++) {
-        vkGetPhysicalDeviceProperties(devices[idx], &properties);
+        context->device = devices[idx];
+
+        vkGetPhysicalDeviceProperties(context->device, &properties);
+        if (properties.deviceType != preferred_device)
+            continue;
 
         trace("GPU: %s", properties.deviceName);
 
-        if (properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-            if (matches_required_features(devices[idx])) {
-                *device = devices[idx];
-                return true;
-            }
-        }
+        if (!matches_device_requirements(context->device))
+            continue;
+
+        if (!vulkan_create_device(context, window))
+            continue;
+
+        if (!vulkan_create_swapchain(context))
+            continue;
+
+        if (context->swapchain.format_count == 0)
+            continue;
+
+        return true;
     }
 
-    // try to find any GPU with the required features
+    // try to find any GPU
     for (u32 idx = 0; idx < device_count; idx++) {
-        if (matches_required_features(devices[idx])) {
-            *device = devices[idx];
-            return true;
-        }
+        context->device = devices[idx];
+
+        vkGetPhysicalDeviceProperties(context->device, &properties);
+        if (properties.deviceType == preferred_device)
+            continue;
+
+        trace("GPU: %s", properties.deviceName);
+
+        if (!matches_device_requirements(context->device))
+            continue;
+
+        if (!vulkan_create_device(context, window))
+            continue;
+
+        if (!vulkan_create_swapchain(context))
+            continue;
+
+        if (context->swapchain.format_count == 0)
+            continue;
+
+        return true;
     }
 
     return false;
 }
 
-bool find_queue_families(VkPhysicalDevice device, u32 *indices) {
-    u32 family_count;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, NULL);
-
-    VkQueueFamilyProperties* families = malloc(family_count * sizeof(VkQueueFamilyProperties));
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &family_count, families);
-
-    // find queue family that supports graphics
-    for (u32 idx = 0; idx < family_count; idx++) {
-        if (families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            *indices = idx;
-            return true;
-        }
-    }
-
-    return false;
-}
-
-/// present_mode takes a ref to a preferred mode and either does nothing
-/// or changes the present mode to one that's supported
-bool try_preferred_present_mode(RenderContext *context,
-                                VkPresentModeKHR *preferred_present_mode) {
-    u32 count = 0;
-    VkResult present_support_result;
-    present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
-        context->device,
-        context->surface,
-        &count,
-        NULL
-    );
-
-    VkPresentModeKHR* present_modes = malloc(count * sizeof(VkPresentModeKHR*));
-    present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
-        context->device,
-        context->surface,
-        &count,
-        present_modes
-    );
-
-    if (present_support_result)
-        return false;
-
-    if (count == 0)
-        return false;
-
-    // do nothing if the `preferred_present_mode` is supported
-    for (u32 idx = 0; idx < count; idx++)
-        if (present_modes[idx] == *preferred_present_mode) return true;
-
-    if (get_log_level() == LOG_TRACE) {
-        const char** names = malloc(count * sizeof(char*));
-
-        for (u32 idx = 0; idx < count; idx++) {
-            switch (present_modes[idx]) {
-                case VK_PRESENT_MODE_IMMEDIATE_KHR:
-                    names[idx] = "VK_PRESENT_MODE_IMMEDIATE_KHR";
-                    break;
-                case VK_PRESENT_MODE_MAILBOX_KHR:
-                    names[idx] = "VK_PRESENT_MODE_MAILBOX_KHR";
-                    break;
-                case VK_PRESENT_MODE_FIFO_KHR:
-                    names[idx] = "VK_PRESENT_MODE_FIFO_KHR";
-                    break;
-                case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
-                    names[idx] = "VK_PRESENT_MODE_FIFO_RELAXED_KHR";
-                    break;
-                case VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR:
-                    names[idx] = "VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR";
-                    break;
-                case VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR:
-                    names[idx] = "VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR";
-                    break;
-                case VK_PRESENT_MODE_MAX_ENUM_KHR:
-                    names[idx] = "VK_PRESENT_MODE_MAX_ENUM_KHR";
-                    break;
-            }
-        }
-
-        trace_array(names, count, "supported present modes: ");
-    }
-
-    return present_modes[0];
-}
-
-void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
+bool vulkan_instance_create(RenderContext *context, SDL_Window *window) {
     u32 ext_count = 0;
     const char** extensions = get_required_extensions(window, &ext_count);
 
@@ -369,79 +476,35 @@ void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
 
     u32 opt_count;
     const char** opt_extensions = get_optional_extensions(&opt_count);
+    trace_array(opt_extensions, opt_count, "optional extensions: ");
 
     if (vkCreateInstance(&instance_create_info, NULL, &context->instance))
+        return false;
+
+    return true;
+}
+
+void vulkan_engine_create(RenderContext *context, SDL_Window *window) {
+    if (!vulkan_instance_create(context, window))
         panic("failed to create instance");
 
     if (vulkan_debugger_create(context))
         panic("failed to attach debugger");
 
-    if (!find_most_suitable_device(context, &context->device))
-        panic("failed to create device");
-
-    // find a simple queue that can handle at least graphics for now
-    u32 queue_family_idx;
-    if (!find_queue_families(context->device, &queue_family_idx))
-        panic("couldn't find any queue families");
-
-    // NOTE: can create multiple logical devices with different requirements
-    // for the same physical device
-
-    // a priority for scheduling command buffers between 0.0 and 1.0
-    f32 queue_priority = 1.0;
-
-    VkDeviceQueueCreateInfo queue_create_info = {
-        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = queue_family_idx,
-        .queueCount = 1,
-        .pQueuePriorities = &queue_priority,
-    };
-
-    // enable no device feature
-    VkPhysicalDeviceFeatures device_features = {};
-
-    VkDeviceCreateInfo device_create_info = {
-        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pQueueCreateInfos = &queue_create_info,
-        .queueCreateInfoCount = 1,
-        .pEnabledFeatures = &device_features,
-    };
-
-    if (vkCreateDevice(context->device, &device_create_info, NULL, &context->driver))
-        panic("failed to create driver");
-
-    vkGetDeviceQueue(context->driver, queue_family_idx, 0, &context->queue);
-
-    if (!SDL_Vulkan_CreateSurface(window, context->instance, &context->surface))
-        panic("failed to create surface");
-
-    context->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-    if (!try_preferred_present_mode(context, &context->present_mode))
-        panic("failed to find any present mode");
-
-    // NOTE: for now the present_queue and queue will be the same
-    VkBool32 surface_supported = false;
-    VkResult surface_support_result = vkGetPhysicalDeviceSurfaceSupportKHR(
-        context->device,
-        queue_family_idx,
-        context->surface,
-        &surface_supported
-    );
-
-    if (!(surface_supported && surface_support_result == VK_SUCCESS))
-        panic("selected queue doesn't support required surface");
-
-    vkGetDeviceQueue(context->driver, queue_family_idx, 0, &context->present_queue);
+    if (!create_most_suitable_device(context, window))
+        panic("failed to setup any GPU");
 
     info("vulkan engine created");
 }
 
-// NOTE: layers appear to be unloading twice
+// FIXME: layers appear to be unloading twice
 void vulkan_engine_destroy(RenderContext *context) {
     vkDestroyDevice(context->driver, NULL);
     vkDestroySurfaceKHR(context->instance, context->surface, NULL);
     DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
     vkDestroyInstance(context->instance, NULL);
+
+    free(context->swapchain.formats);
 
     info("vulkan engine destroyed");
 }

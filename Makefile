@@ -31,9 +31,9 @@ release: CFLAGS+=-march=native -O2
 debug release: $(TARGET)
 
 debug_run: debug $(TARGET)
-	@lldb ./$(TARGET) --one-line run -- --trace
+	@lldb ./$(TARGET) -o run -- --trace
 
-release_run: release $(TARGET)
+run: release $(TARGET)
 	@./target/main
 
 configure:
