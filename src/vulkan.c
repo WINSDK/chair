@@ -32,23 +32,9 @@ const char** get_optional_extensions(u32 *count) {
         extensions_names[idx] = extensions[idx].extensionName;
 
     trace_array(extensions_names, *count, "available extensions: ");
+    free(extensions);
 
     return extensions_names;
-}
-
-const char** get_layers(u32 *count) {
-    vkEnumerateInstanceLayerProperties(count, NULL);
-
-    VkLayerProperties* layers = malloc(*count * sizeof(VkLayerProperties));
-    vkEnumerateInstanceLayerProperties(count, layers);
-
-    const char** layer_names = malloc(*count * sizeof(char*));
-    for (u32 idx = 0; idx < *count; idx++)
-        layer_names[idx] = layers[idx].layerName;
-
-    trace_array(layer_names, *count, "layers enabled: ");
-
-    return layer_names;
 }
 
 bool matches_device_requirements(VkPhysicalDevice device) {
@@ -56,8 +42,8 @@ bool matches_device_requirements(VkPhysicalDevice device) {
     vkGetPhysicalDeviceFeatures(device, &features);
 
     u32 count;
-    VkResult extension_result;
-    extension_result = vkEnumerateDeviceExtensionProperties(
+    VkResult extension_fail;
+    extension_fail = vkEnumerateDeviceExtensionProperties(
         device,
         NULL,
         &count,
@@ -65,14 +51,14 @@ bool matches_device_requirements(VkPhysicalDevice device) {
     );
 
     VkExtensionProperties* extensions = malloc(count * sizeof(VkExtensionProperties));
-    extension_result = vkEnumerateDeviceExtensionProperties(
+    extension_fail = vkEnumerateDeviceExtensionProperties(
         device,
         NULL,
         &count,
         extensions
     );
 
-    if (extension_result)
+    if (extension_fail)
         return false;
 
     bool required_extensions_found = false;
@@ -83,8 +69,10 @@ bool matches_device_requirements(VkPhysicalDevice device) {
             required_extensions_found = true;
     }
 
-    if (!required_extensions_found)
+    if (!required_extensions_found) {
+        free(extensions);
         return false;
+    }
 
     if (get_log_level() == LOG_TRACE) {
         const char** extension_names = malloc(count * sizeof(char*));
@@ -93,15 +81,16 @@ bool matches_device_requirements(VkPhysicalDevice device) {
             extension_names[idx] = extensions[idx].extensionName;
 
         trace_array(extension_names, count, "available device extensions: ");
+        free(extension_names);
     }
 
+    free(extensions);
     return features.geometryShader;
 }
 
-/// Present_mode takes a ref to a preferred mode and either does nothing
-/// or changes the present mode to one that's supported.
-bool try_preferred_present_mode(RenderContext *context,
-                                VkPresentModeKHR *preferred_present_mode) {
+// Sets correct present mode on success. In the case of failing to find the
+// preferred present mode, the present mode is left untouched.
+bool try_preferred_present_mode(RenderContext *context) {
     u32 count = 0;
     VkResult present_support_result;
     present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
@@ -119,15 +108,10 @@ bool try_preferred_present_mode(RenderContext *context,
         present_modes
     );
 
-    if (present_support_result)
+    if (present_support_result || count == 0) {
+        free(present_modes);
         return false;
-
-    if (count == 0)
-        return false;
-
-    // do nothing if the `preferred_present_mode` is supported
-    for (u32 idx = 0; idx < count; idx++)
-        if (present_modes[idx] == *preferred_present_mode) return true;
+    }
 
     if (get_log_level() == LOG_TRACE) {
         const char** names = malloc(count * sizeof(char*));
@@ -159,27 +143,74 @@ bool try_preferred_present_mode(RenderContext *context,
         }
 
         trace_array(names, count, "supported present modes: ");
+        free(names);
     }
 
-    return present_modes[0];
+    // do nothing if the `preferred_present_mode` is supported
+    for (u32 idx = 0; idx < count; idx++) {
+        if (present_modes[idx] == VK_PRESENT_MODE_MAILBOX_KHR) {
+            context->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+
+            free(present_modes);
+            return true;
+        }
+    }
+
+    free(present_modes);
+    return false;
 }
 
-/// Find a queue family that supports graphics.
-bool find_queue_families(VkPhysicalDevice device, u32 *indices) {
-    u32 count;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, NULL);
+// Sets correct swapchain format on success. In the case of failing to find the
+// preferred swapchain, the format is left untouched.
+bool try_preferred_swapchain_format(RenderContext* context) {
+    SwapChainDescriptor *chain = &context->swapchain;
 
-    VkQueueFamilyProperties* families = malloc(count * sizeof(VkQueueFamilyProperties));
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, families);
+    for (u32 idx = 0; idx < chain->format_count; idx++) {
+        VkSurfaceFormatKHR surface_format = chain->formats[idx];
 
-    for (u32 idx = 0; idx < count; idx++) {
-        if (families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            *indices = idx;
+        if (chain->formats[idx].format == VK_FORMAT_B8G8R8A8_SRGB &&
+            surface_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+
+            context->surface_format = surface_format;
             return true;
         }
     }
 
     return false;
+}
+
+/// Find a queue family that supports graphics.
+bool find_queue_families(RenderContext *context) {
+    u32 count;
+    vkGetPhysicalDeviceQueueFamilyProperties(context->device, &count, NULL);
+
+    VkQueueFamilyProperties* families = malloc(count * sizeof(VkQueueFamilyProperties));
+    vkGetPhysicalDeviceQueueFamilyProperties(context->device, &count, families);
+
+    for (u32 idx = 0; idx < count; idx++) {
+        if (families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            context->queue_family_indices = idx;
+
+            free(families);
+            return true;
+        }
+    }
+
+    free(families);
+    return false;
+}
+
+void vulkan_valid_layers_create(ValidationLayers *valid) {
+    vkEnumerateInstanceLayerProperties(&valid->layer_count, NULL);
+
+    valid->data = malloc(valid->layer_count * sizeof(VkLayerProperties));
+    vkEnumerateInstanceLayerProperties(&valid->layer_count, valid->data);
+
+    valid->layers = malloc(valid->layer_count * sizeof(char*));
+    for (u32 idx = 0; idx < valid->layer_count; idx++)
+        valid->layers[idx] = valid->data[idx].layerName;
+
+    trace_array(valid->layers, valid->layer_count, "layers enabled: ");
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
@@ -246,14 +277,47 @@ VkResult vulkan_debugger_create(RenderContext *context) {
     );
 }
 
+/// Create a valid swapchain present extent.
+void create_swapchain_present_extent(RenderContext *context) {
+    VkSurfaceCapabilitiesKHR *capabilities = &context->swapchain.capabilities;
+
+    // some window managers set currentExtent.width to u32::MAX for some reason
+    // so we'll just make up a good resolution in this case
+    if (capabilities->currentExtent.width == 0xFFFFFFFF) {
+        i32 width, height;
+        SDL_Vulkan_GetDrawableSize(
+            context->window,
+            &width,
+            &height
+        );
+
+        context->extent.width = clamp(
+            (u32)width,
+            capabilities->minImageExtent.width,
+            capabilities->maxImageExtent.width
+        );
+
+        context->extent.height = clamp(
+            (u32)height,
+            capabilities->minImageExtent.height,
+            capabilities->maxImageExtent.height
+        );
+
+        return;
+    }
+
+    context->extent = capabilities->currentExtent;
+}
+
 /// Try to create a swapchain with at least one format.
 bool vulkan_create_swapchain(RenderContext *context) {
     SwapChainDescriptor* chain = &context->swapchain;
+    VkSurfaceCapabilitiesKHR* capabilities = &chain->capabilities;
 
     VkResult surface_capabilities_fail = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
         context->device,
         context->surface,
-        &chain->capabilities
+        capabilities
     );
 
     if (surface_capabilities_fail)
@@ -278,17 +342,73 @@ bool vulkan_create_swapchain(RenderContext *context) {
         chain->formats
     );
 
-    if (surface_formats_fail)
+    if (surface_formats_fail || chain->format_count == 0)
         return false;
+
+    VkSurfaceFormatKHR fallback_surface_format = {
+        .format = VK_FORMAT_UNDEFINED,
+        .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+    };
+
+    if (!try_preferred_swapchain_format(context))
+        context->surface_format = fallback_surface_format;
+
+    if (!try_preferred_present_mode(context))
+        context->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+
+    create_swapchain_present_extent(context);
+
+    // number of images to be held in the swapchain
+    u32 count = capabilities->minImageCount + 1;
+
+    // NOTE: may want to use `VK_IMAGE_USAGE_TRANSFER_DST_BIT` for image usage
+    // as it allows rendering to a seperate image first to perform
+    // post-processing
+    VkSwapchainCreateInfoKHR create_info = {
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface = context->surface,
+        .minImageCount = count,
+        .imageFormat = context->surface_format.format,
+        .imageExtent = context->extent,
+        .imageArrayLayers = 1,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .preTransform = capabilities->currentTransform,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = context->present_mode,
+        .clipped = VK_TRUE,
+        .oldSwapchain = VK_NULL_HANDLE
+    };
+
+    // NOTE: `oldSwapchain` can specify a backup swapchain for when the window
+    // get's resized or if the chain becomes invalid
+
+    // VK_SHARING_MODE_CONCURRENT: Images can be used across multiple queue
+    // families without explicit ownership transfers
+    //
+    // VK_SHARING_MODE_EXCLUSIVE: An image is owned by one queue family at a
+    // time and ownership must be explicitly transferred before using it in
+    // another queue family. This option offers the best performance
+
+    if (context->present_queue != context->queue) {
+        create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    } else {
+        create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        create_info.queueFamilyIndexCount = 2;
+        create_info.pQueueFamilyIndices = &context->queue_family_indices;
+    }
+
+    if (vkCreateSwapchainKHR(context->driver, &create_info, NULL, &chain->data)) {
+        warn("failed to create swapchain");
+        return false;
+    }
 
     return true;
 }
 
-// Try to create a device, associated queue, present queue and surface.
+/// Try to create a device, associated queue, present queue and surface.
 bool vulkan_create_device(RenderContext *context) {
     // find a simple queue that can handle at least graphics for now
-    u32 queue_family_idx;
-    if (!find_queue_families(context->device, &queue_family_idx)) {
+    if (!find_queue_families(context)) {
         warn("couldn't find any queue families");
         return false;
     }
@@ -301,7 +421,7 @@ bool vulkan_create_device(RenderContext *context) {
 
     VkDeviceQueueCreateInfo queue_create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = queue_family_idx,
+        .queueFamilyIndex = context->queue_family_indices,
         .queueCount = 1,
         .pQueuePriorities = &queue_priority,
     };
@@ -327,16 +447,10 @@ bool vulkan_create_device(RenderContext *context) {
         return false;
     }
 
-    vkGetDeviceQueue(context->driver, queue_family_idx, 0, &context->queue);
+    vkGetDeviceQueue(context->driver, context->queue_family_indices, 0, &context->queue);
 
     if (!SDL_Vulkan_CreateSurface(context->window, context->instance, &context->surface)) {
         warn("failed to create surface");
-        return false;
-    }
-
-    context->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-    if (!try_preferred_present_mode(context, &context->present_mode)) {
-        warn("failed to find any present mode");
         return false;
     }
 
@@ -344,7 +458,7 @@ bool vulkan_create_device(RenderContext *context) {
     VkBool32 surface_supported = false;
     VkResult surface_support_fail = vkGetPhysicalDeviceSurfaceSupportKHR(
         context->device,
-        queue_family_idx,
+        context->queue_family_indices,
         context->surface,
         &surface_supported
     );
@@ -390,9 +504,7 @@ bool create_most_suitable_device(RenderContext *context) {
         if (!vulkan_create_swapchain(context))
             continue;
 
-        if (context->swapchain.format_count == 0)
-            continue;
-
+        free(devices);
         return true;
     }
 
@@ -415,12 +527,11 @@ bool create_most_suitable_device(RenderContext *context) {
         if (!vulkan_create_swapchain(context))
             continue;
 
-        if (context->swapchain.format_count == 0)
-            continue;
-
+        free(devices);
         return true;
     }
 
+    free(devices);
     return false;
 }
 
@@ -430,9 +541,7 @@ bool vulkan_instance_create(RenderContext *context) {
 
     VkApplicationInfo app_info = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = app_name,
         .applicationVersion = VK_MAKE_VERSION(0, 0, 1),
-        .pEngineName = "",
         .engineVersion = VK_MAKE_VERSION(0, 0, 1),
         .apiVersion = VK_API_VERSION_1_3,
     };
@@ -462,29 +571,31 @@ bool vulkan_instance_create(RenderContext *context) {
         .pfnUserCallback = vulkan_debug_handler,
     };
 
-    if (get_log_level() >= LOG_INFO) {
-        // enable all supported layers when for debugging
-        u32 layer_count;
-        const char** names = get_layers(&layer_count);
+    if (get_log_level() == LOG_TRACE) {
+        ValidationLayers* valid = &context->validation;
+        vulkan_valid_layers_create(valid);
 
-        instance_create_info.enabledLayerCount = layer_count;
-        instance_create_info.ppEnabledLayerNames = names;
+        // enable all supported layers when for debugging
+        instance_create_info.enabledLayerCount = valid->layer_count;
+        instance_create_info.ppEnabledLayerNames = valid->layers;
 
         // attach debugger just for `vkDestroyInstance` and `vkCreateInstance`
         instance_create_info.pNext = &debug_create_info;
     }
 
     u32 opt_count;
-    const char** opt_extensions = get_optional_extensions(&opt_count);
-    trace_array(opt_extensions, opt_count, "optional extensions: ");
+    bool x = true;
+    x = vkCreateInstance(&instance_create_info, NULL, &context->instance) == 0;
 
-    if (vkCreateInstance(&instance_create_info, NULL, &context->instance))
-        return false;
+    free(get_optional_extensions(&opt_count));
+    free(extensions);
 
-    return true;
+    return x;
 }
 
 void vulkan_engine_create(RenderContext *context) {
+    SwapChainDescriptor *chain = &context->swapchain;
+
     if (!vulkan_instance_create(context))
         panic("failed to create instance");
 
@@ -494,17 +605,53 @@ void vulkan_engine_create(RenderContext *context) {
     if (!create_most_suitable_device(context))
         panic("failed to setup any GPU");
 
+    VkResult swapchain_fail;
+    swapchain_fail = vkGetSwapchainImagesKHR(
+        context->driver,
+        chain->data,
+        &chain->format_count,
+        NULL
+    );
+
+    if (swapchain_fail)
+        panic("failed to read count of swapchain images");
+
+    chain->images = malloc(chain->image_count * sizeof(VkImage));
+    swapchain_fail = vkGetSwapchainImagesKHR(
+        context->driver,
+        chain->data,
+        &chain->format_count,
+        chain->images
+    );
+
+    if (swapchain_fail)
+        panic("failed to read swapchain images");
+
     info("vulkan engine created");
+}
+
+void vulkan_swapchain_destroy(VkDevice driver, SwapChainDescriptor* chain) {
+    vkDestroySwapchainKHR(driver, chain->data, NULL);
+
+    free(chain->images);
+    free(chain->formats);
+
+    info("vulkan swapchain destroyed");
+}
+
+void vulkan_valid_destroy(ValidationLayers *valid) {
+    free(valid->layers);
+    free(valid->data);
 }
 
 // FIXME: layers appear to be unloading twice
 void vulkan_engine_destroy(RenderContext *context) {
+    vulkan_swapchain_destroy(context->driver, &context->swapchain);
     vkDestroyDevice(context->driver, NULL);
     vkDestroySurfaceKHR(context->instance, context->surface, NULL);
     DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
     vkDestroyInstance(context->instance, NULL);
-
-    free(context->swapchain.formats);
+    vulkan_valid_destroy(&context->validation);
 
     info("vulkan engine destroyed");
 }

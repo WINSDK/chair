@@ -15,6 +15,10 @@
  * integrated GPU to use to run some physics calculations or other data. */
 
 typedef struct {
+    /* Interface to send images to the screen.
+     * List of images, accessible by the operating system for display */
+    VkSwapchainKHR data;
+
     /* Basic surface capabilities */
     VkSurfaceCapabilitiesKHR capabilities;
 
@@ -24,10 +28,23 @@ typedef struct {
     /* Number of supported formats */
     u32 format_count;
 
-    /* Interface to send images to the screen.
-     * List of images, accessible by the operating system for display */
-    VkSwapchainKHR data;
+    /* Images received from the swapchain */
+    VkImage* images;
+
+    /* Number of images in the swapchain */
+    u32 image_count;
 } SwapChainDescriptor;
+
+typedef struct {
+    /* Layer properties */
+    VkLayerProperties* data;
+
+    /* Enabled validation layers for debugging */
+    const char** layers;
+
+    /* Count of validation layers for debugging */
+    u32 layer_count;
+} ValidationLayers;
 
 typedef struct {
     /* SDL application state */
@@ -52,19 +69,28 @@ typedef struct {
     VkQueue queue;
 
     /* ??? */
+    u32 queue_family_indices;
+
+    /* ??? */
     VkQueue present_queue;
 
     /* Option for different types of vsync or none at all */
     VkPresentModeKHR present_mode;
 
-    /* Details regarding a swapchain */
+    /* Information related to validation layers */
+    ValidationLayers validation;
+
+    /* Information related to the swapchain */
     SwapChainDescriptor swapchain;
 
     /* Abstraction of platform specific window interactions */
     VkSurfaceKHR surface;
 
-    /* Images received from the swapchain */
-    VkImage images[144];
+    /* Format we've choosen to use for the surface */
+    VkSurfaceFormatKHR surface_format;
+
+    /* Resolution of the swap chain images */
+    VkExtent2D extent;
 } RenderContext;
 
 void vulkan_engine_create(RenderContext *context);

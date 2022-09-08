@@ -10,7 +10,7 @@ void sdl_renderer_create(RenderContext *context) {
     SDL_GetCurrentDisplayMode(0, &displayInfo);
 
     context->window = SDL_CreateWindow(
-        app_name,
+        "SDL2",
         0,
         0,
         displayInfo.w / 2,
@@ -35,6 +35,7 @@ void sdl_renderer_create(RenderContext *context) {
 }
 
 void sdl_renderer_destroy(RenderContext *context) {
+    SDL_DestroyRenderer(context->renderer);
     SDL_DestroyWindow(context->window);
     SDL_Quit();
 

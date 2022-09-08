@@ -33,7 +33,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    RenderContext context;
+    RenderContext context = {};
 
     sdl_renderer_create(&context);
     vulkan_engine_create(&context);

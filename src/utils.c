@@ -2,16 +2,17 @@
 #include <stdlib.h>
 #include <stdnoreturn.h>
 #include <stdatomic.h>
+#include <stdarg.h>
 
 #include "chair.h"
 
 static atomic_uint LEVEL = LOG_WARN;
 
-inline LogLevel get_log_level() {
+LogLevel get_log_level() {
     return atomic_load(&LEVEL);
 }
 
-inline void set_log_level(LogLevel level) {
+void set_log_level(LogLevel level) {
     atomic_store(&LEVEL, level);
 }
 
@@ -40,7 +41,7 @@ void trace(const char *format, ...) {
 }
 
 
-void trace_array(const char** msgs, int len, const char *format, ...) {
+void trace_array(const char** msgs, u32 len, const char *format, ...) {
     if (get_log_level() < LOG_TRACE) return;
 
     va_list ap;
