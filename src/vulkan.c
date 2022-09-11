@@ -224,16 +224,16 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
     void* user_data) {
 
-    if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT ||
-        get_log_level() == LOG_TRACE) {
+    if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT &&
+        get_log_level() >= LOG_TRACE) {
         printf("[vulkan] %s\n", callback_data->pMessage);
-    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT ||
+    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT &&
         get_log_level() >= LOG_INFO) {
         printf("[vulkan] %s\n", callback_data->pMessage);
-    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT ||
+    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT &&
         get_log_level() >= LOG_WARN) {
         printf("[vulkan] %s\n", callback_data->pMessage);
-    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ||
+    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT &&
         get_log_level() >= LOG_ERROR) {
         printf("[vulkan] %s\n", callback_data->pMessage);
     } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT) {
