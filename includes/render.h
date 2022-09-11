@@ -2,7 +2,7 @@
 #define RENDER_H_ 1
 
 #include <stdbool.h>
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
 #include <SDL2/SDL.h>
 
 #include "chair.h"
@@ -33,6 +33,9 @@ typedef struct {
 
     /* View's into the swapchain's images */
     VkImageView *views;
+
+    /* Collection of memory attachments used by the render pass */
+    VkFramebuffer *framebuffers;
 
     /* Number of images in the swapchain */
     u32 image_count;
@@ -94,6 +97,46 @@ typedef struct {
 
     /* Resolution of the swap chain images */
     VkExtent2D dimensions;
+
+    /* Complete description of the resources the pipeline can access */
+    VkPipelineLayout pipeline_layout;
+
+    /* Information of the required sequence of operations for doing a draw call */
+    VkPipeline pipeline;
+
+    /* Collection of attachments, subpasses, and dependencies between the subpasses */
+    VkRenderPass render_pass;
+
+    /* State's in the pipeline that can be mutated without recreating the pipeline again */
+    VkDynamicState *dynamic_states;
+
+    /* Number of dynamic states used */
+    u32 dynamic_state_count;
+
+    /* Where in the framebuffer to render to */
+    VkViewport viewport;
+
+    /* Region of the viewport to actually display */
+    VkRect2D scissor;
+
+    /* Vertex shader code with an entry points */
+    VkShaderModule vert;
+
+    /* Fragment shader code with an entry points */
+    VkShaderModule frag;
+
+    /* Pool from which command buffers are allocated from */
+    VkCommandPool cmd_pool;
+
+    /* Commands to be submitted to the device queue */
+    VkCommandBuffer cmd_buffer;
+
+    /* ??? */
+    VkSemaphore image_available;
+    /* ??? */
+    VkSemaphore render_finished;
+    /* ??? */
+    VkFence in_flight_fence;
 } RenderContext;
 
 void vulkan_engine_create(RenderContext *context);

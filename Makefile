@@ -35,8 +35,8 @@ all: target/release/main
 
 sanitize: CFLAGS  += -g3 -Og -fsanitize=address -fno-omit-frame-pointer
 sanitize: LDFLAGS += -fsanitize=address
-sanitize: target/sanitize/main target/sanitize/dlclose.so
-	LD_PRELOAD="./target/sanitize/dlclose.so" ./target/sanitize/main --trace
+sanitize: target/sanitize/main
+	./target/sanitize/main --trace
 
 debug: CFLAGS += -g3 -Og
 debug: target/debug/main
@@ -70,9 +70,6 @@ target/debug/main: target/debug target/shaders $(DEB_OBJS) $(SHADERS)
 target/release/main: target/release target/shaders $(REL_OBJS) $(SHADERS)
 	$(CC) $(LDFLAGS) $(LIBS) $(REL_OBJS) -o $@
 	strip --strip-all target/release/main
-
-target/sanitize/dlclose.so: src/dlclose.c
-	$(CC) --shared -o $@ $<
 
 target/sanitize/%.o: src/%.c
 	$(CC) $(CFLAGS) -Iincludes -o $@ -c $<

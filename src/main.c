@@ -39,7 +39,7 @@ int main(int argc, char *argv[]) {
     vulkan_engine_create(&context);
 
     t = time_elapsed(t);
-    info("%lld.%.9ld seconds elapsed to init vulkan",
+    info("%lld.%.9ld seconds elapsed to initialize vulkan",
          (long long)t.tv_sec, t.tv_nsec);
 
     event_loop(&context);

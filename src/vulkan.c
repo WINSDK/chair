@@ -278,7 +278,7 @@ VkResult vulkan_debugger_create(RenderContext *context) {
         &create_info,
         NULL,
         &context->messenger
-    );
+    ) == VK_SUCCESS;
 }
 
 /// Create a valid swapchain present extent.
@@ -363,7 +363,7 @@ bool vulkan_swapchain_create(RenderContext *context) {
     create_swapchain_present_extent(context);
 
     // number of images to be held in the swapchain
-    u32 count = capabilities->minImageCount + 1;
+    chain->image_count = capabilities->minImageCount + 1;
 
     // NOTE: may want to use `VK_IMAGE_USAGE_TRANSFER_DST_BIT` for image usage
     // as it allows rendering to a seperate image first to perform
@@ -372,7 +372,7 @@ bool vulkan_swapchain_create(RenderContext *context) {
     VkSwapchainCreateInfoKHR create_info = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = context->surface,
-        .minImageCount = count,
+        .minImageCount = chain->image_count,
         .imageFormat = context->surface_format.format,
         .imageExtent = context->dimensions,
         .imageArrayLayers = 1,
@@ -402,22 +402,57 @@ bool vulkan_swapchain_create(RenderContext *context) {
         create_info.pQueueFamilyIndices = &context->queue_family_indices;
     }
 
-    if (vkCreateSwapchainKHR(context->driver, &create_info, NULL, &chain->data)) {
-        warn("failed to create swapchain");
+    VkResult swapchain_fail;
+    swapchain_fail = vkCreateSwapchainKHR(
+        context->driver,
+        &create_info,
+        NULL,
+        &chain->data
+    );
+
+    if (swapchain_fail)
+        return false;
+
+    swapchain_fail = vkGetSwapchainImagesKHR(
+        context->driver,
+        chain->data,
+        &chain->format_count,
+        NULL
+    );
+
+    if (swapchain_fail) {
+        error("failed to read count of swapchain images");
+        return false;
+    }
+
+    chain->images = malloc(chain->image_count * sizeof(VkImage));
+    swapchain_fail = vkGetSwapchainImagesKHR(
+        context->driver,
+        chain->data,
+        &chain->format_count,
+        chain->images
+    );
+
+    if (swapchain_fail) {
+        error("failed to get swapchain images");
         return false;
     }
 
     return true;
 }
 
-void vulkan_swapchain_destroy(VkDevice driver, SwapChainDescriptor* chain) {
-    vkDestroySwapchainKHR(driver, chain->data, NULL);
+void vulkan_swapchain_destroy(RenderContext *context) {
+    SwapChainDescriptor* chain = &context->swapchain;
 
-    free(chain->images);
+    for (u32 idx = 0; idx < chain->image_count; idx++) {
+        vkDestroyImageView(context->driver, chain->views[idx], NULL);
+        vkDestroyImage(context->driver, chain->images[idx], NULL);
+    }
+
+    vkDestroySwapchainKHR(context->driver, chain->data, NULL);
+
     free(chain->formats);
     free(chain->views);
-
-    info("vulkan swapchain destroyed");
 }
 
 /// Try to create a device, associated queue, present queue and surface.
@@ -488,7 +523,7 @@ bool vulkan_device_create(RenderContext *context) {
 
 /// Try to setup a device that supports the required
 /// features, extensions and swapchain.
-bool create_most_suitable_device(RenderContext *context) {
+bool vulkan_most_suitable_device_create(RenderContext *context) {
     u32 device_count;
     vkEnumeratePhysicalDevices(context->instance, &device_count, NULL);
 
@@ -650,6 +685,58 @@ VkResult vulkan_shader_module_create(RenderContext *context,
     return vkCreateShaderModule(context->driver, &create_info, NULL, module);
 }
 
+bool vulkan_render_pass_create(RenderContext *context) {
+    VkAttachmentDescription color_attachment = {
+        .format = context->surface_format.format,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+    };
+
+    VkAttachmentReference color_attachment_ref = {
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+    };
+
+    // NOTE: one attachment can have multiple subpasses for post-processing
+
+    // `pColorAttachments` refers to `layout(location = 0) out vec4 outColor`
+    VkSubpassDescription subpass = {
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &color_attachment_ref
+    };
+
+    VkSubpassDependency dependency = {
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = 0,
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+    };
+
+    VkRenderPassCreateInfo render_pass_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .pAttachments = &color_attachment,
+        .attachmentCount = 1,
+        .pSubpasses = &subpass,
+        .subpassCount = 1,
+        .pDependencies = &dependency,
+        .dependencyCount = 1
+    };
+
+    return vkCreateRenderPass(
+        context->driver,
+        &render_pass_info,
+        NULL,
+        &context->render_pass
+    ) == VK_SUCCESS;
+}
+
 bool vulkan_pipeline_create(RenderContext *context) {
     u32 vert_size, frag_size;
 
@@ -661,9 +748,24 @@ bool vulkan_pipeline_create(RenderContext *context) {
         return false;
     }
 
-    VkShaderModule vert, frag;
-    if (vulkan_shader_module_create(context, vert_bin, vert_size, &vert) ||
-        vulkan_shader_module_create(context, frag_bin, frag_size, &frag)) {
+    VkResult r1 = vulkan_shader_module_create(
+        context,
+        frag_bin,
+        frag_size,
+        &context->frag
+    );
+
+    VkResult r2 = vulkan_shader_module_create(
+        context,
+        vert_bin,
+        vert_size,
+        &context->vert
+    );
+
+    free(vert_bin);
+    free(frag_bin);
+
+    if (r1 || r2) {
         error("failed to create shader module");
         return false;
     }
@@ -671,14 +773,14 @@ bool vulkan_pipeline_create(RenderContext *context) {
     VkPipelineShaderStageCreateInfo vert_shader_create_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-        .module = frag,
+        .module = context->frag,
         .pName = "main"
     };
 
     VkPipelineShaderStageCreateInfo frag_shader_create_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_VERTEX_BIT,
-        .module = vert,
+        .module = context->vert,
         .pName = "main"
     };
 
@@ -687,15 +789,16 @@ bool vulkan_pipeline_create(RenderContext *context) {
         frag_shader_create_info
     };
 
-    VkDynamicState *dynamic_states = malloc(2 * sizeof(VkDynamicState));
+    context->dynamic_states = malloc(2 * sizeof(VkDynamicState));
+    context->dynamic_state_count = 2;
 
-    dynamic_states[0] = VK_DYNAMIC_STATE_VIEWPORT;
-    dynamic_states[1] = VK_DYNAMIC_STATE_SCISSOR;
+    context->dynamic_states[0] = VK_DYNAMIC_STATE_VIEWPORT;
+    context->dynamic_states[1] = VK_DYNAMIC_STATE_SCISSOR;
 
     VkPipelineDynamicStateCreateInfo dynamic_create_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .pDynamicStates = dynamic_states,
-        .dynamicStateCount = 2
+        .pDynamicStates = context->dynamic_states,
+        .dynamicStateCount = context->dynamic_state_count
     };
 
     // TODO: `pVertexBindingDescriptions` and `pVertexAttributeDescriptions`
@@ -733,30 +836,24 @@ bool vulkan_pipeline_create(RenderContext *context) {
         .primitiveRestartEnable = VK_FALSE,
     };
 
-    // where in the framebuffer to render to
-    VkViewport viewport = {
-        .x = 0.0,
-        .y = 0.0,
-        .width = (float)context->dimensions.width,
-        .height = (float)context->dimensions.height,
-        .minDepth = 0.0,
-        .maxDepth = 1.0
-    };
+    context->viewport.x = 0.0;
+    context->viewport.y = 0.0;
+    context->viewport.width = (float)context->dimensions.width;
+    context->viewport.height = (float)context->dimensions.height;
+    context->viewport.minDepth = 0.0;
+    context->viewport.maxDepth = 1.0;
 
-    // region of the viewport to actually display
-    VkRect2D scissor = {
-        .offset = {0, 0},
-        .extent = context->dimensions
-    };
+    context->scissor.offset.x = 0;
+    context->scissor.offset.y = 0;
+    context->scissor.extent = context->dimensions;
 
     VkPipelineViewportStateCreateInfo viewport_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-        .pViewports = &viewport,
+        .pViewports = &context->viewport,
         .viewportCount = 1,
-        .pScissors = &scissor,
+        .pScissors = &context->scissor,
         .scissorCount = 1
     };
-
 
     // `polygonMode` can be used with `VK_POLYGON_MODE_LINE` for wireframe
     //
@@ -801,79 +898,323 @@ bool vulkan_pipeline_create(RenderContext *context) {
         .pPushConstantRanges = NULL
     };
 
-    VkPipelineLayout pipeline_layout;
-    if (vkCreatePipelineLayout(context->driver, &pipeline_layout_info, NULL, &pipeline_layout))
+    if (vkCreatePipelineLayout(context->driver, &pipeline_layout_info, NULL, &context->pipeline_layout)) {
         return false;
+    }
 
-    vkDestroyPipelineLayout(context->driver, pipeline_layout, NULL);
+    VkGraphicsPipelineCreateInfo pipeline_info = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .layout = context->pipeline_layout,
+        .renderPass = context->render_pass,
+        .subpass = 0, // index into the render pass for what subpass to use
+        .basePipelineHandle = NULL, // other potential pipeline to use for faster creation
+        .basePipelineIndex = -1,    // of pipelines that share functionality
+        .pStages = shader_stages,
+        .stageCount = 2,
+        .pVertexInputState = &vertex_input_info,
+        .pInputAssemblyState = &input_assembly_info,
+        .pViewportState = &viewport_info,
+        .pRasterizationState = &rasterizer_info,
+        .pMultisampleState = &multisampling_info,
+        .pColorBlendState = &color_blend_info,
+        .pDynamicState = &dynamic_create_info,
+        .pDepthStencilState = NULL,
+    };
 
-    free(dynamic_states);
-    free(vert_bin);
-    free(frag_bin);
+    // NOTE: `vkCreateGraphicsPipelines` takes a list of pipelines to create at once
+    return vkCreateGraphicsPipelines(
+        context->driver,
+        VK_NULL_HANDLE,
+        1,
+        &pipeline_info,
+        NULL,
+        &context->pipeline
+    ) == VK_SUCCESS;
+}
 
-    vkDestroyShaderModule(context->driver, vert, NULL);
-    vkDestroyShaderModule(context->driver, frag, NULL);
+void vulkan_pipeline_destroy(RenderContext *context) {
+    vkDestroyPipeline(context->driver, context->pipeline, NULL);
+    vkDestroyPipelineLayout(context->driver, context->pipeline_layout, NULL);
+    vkDestroyShaderModule(context->driver, context->vert, NULL);
+    vkDestroyShaderModule(context->driver, context->frag, NULL);
+
+    free(context->dynamic_states);
+}
+
+bool vulkan_framebuffers_create(RenderContext *context) {
+    SwapChainDescriptor *chain = &context->swapchain;
+
+    VkFramebufferCreateInfo framebuffer_info = {
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = context->render_pass,
+        .attachmentCount = 1,
+        .width = context->dimensions.width,
+        .height = context->dimensions.height,
+        .layers = 1
+    };
+
+    chain->framebuffers = malloc(chain->image_count * sizeof(VkFramebuffer));
+
+    for (u32 idx = 0; idx < chain->image_count; idx++) {
+        VkImageView attachments[1] = { chain->views[idx] };
+        framebuffer_info.pAttachments = attachments;
+
+        VkResult framebuffer_fail = vkCreateFramebuffer(
+            context->driver,
+            &framebuffer_info,
+            NULL,
+            &chain->framebuffers[idx]
+        );
+
+        if (framebuffer_fail)
+            return false;
+    }
 
     return true;
 }
 
-void vulkan_pipeline_destroy() {
+void vulkan_framebuffers_destroy(VkDevice driver, SwapChainDescriptor *chain) {
+    for (u32 idx = 0; idx < chain->image_count; idx++)
+        vkDestroyFramebuffer(driver, chain->framebuffers[idx], NULL);
+
+    free(chain->framebuffers);
+}
+
+bool vulkan_cmd_pool_create(RenderContext *context) {
+    VkCommandPoolCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = context->queue_family_indices
+    };
+
+    return vkCreateCommandPool(
+        context->driver,
+        &create_info,
+        NULL,
+        &context->cmd_pool
+    ) == VK_SUCCESS;
+}
+
+bool vulkan_cmd_buffer_alloc(RenderContext *context) {
+    VkCommandBufferAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = context->cmd_pool,
+        .commandBufferCount = 1,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    };
+
+    return vkAllocateCommandBuffers(
+        context->driver,
+        &alloc_info,
+        &context->cmd_buffer
+    ) == VK_SUCCESS;
+}
+
+bool vulkan_sync_primitives_create(RenderContext *context) {
+    VkSemaphoreCreateInfo semaphore_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+    };
+
+    VkFenceCreateInfo fence_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT
+    };
+
+    VkResult r1 = vkCreateSemaphore(
+        context->driver,
+        &semaphore_info,
+        NULL,
+        &context->image_available
+    );
+
+    VkResult r2 = vkCreateSemaphore(
+        context->driver,
+        &semaphore_info,
+        NULL,
+        &context->render_finished
+    );
+
+    VkResult r3 = vkCreateFence(
+        context->driver,
+        &fence_info,
+        NULL,
+        &context->in_flight_fence
+    );
+
+    return (r1 & r2 & r3) == VK_SUCCESS;
+}
+
+void vulkan_sync_primitives_destroy(RenderContext *context) {
+    vkDestroySemaphore(context->driver, context->image_available, NULL);
+    vkDestroySemaphore(context->driver, context->render_finished, NULL);
+    vkDestroyFence(context->driver, context->in_flight_fence, NULL);
+}
+
+bool vulkan_record_cmd_buffer(RenderContext *context, u32 image_idx) {
+    VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    };
+
+    if (vkBeginCommandBuffer(context->cmd_buffer, &begin_info))
+        return false;
+
+    /* ------------------------ render pass ------------------------ */
+
+    // clear the screen with black 100% opacity
+    VkClearValue clear_color = {{{0.0, 0.0, 0.0, 0.0}}};
+
+    VkRenderPassBeginInfo render_pass_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = context->render_pass,
+        .framebuffer = context->swapchain.framebuffers[image_idx],
+        .renderArea.offset = {0, 0},
+        .renderArea.extent = context->dimensions,
+        .pClearValues = &clear_color,
+        .clearValueCount = 1,
+    };
+
+    vkCmdBeginRenderPass(
+        context->cmd_buffer,
+        &render_pass_info,
+        VK_SUBPASS_CONTENTS_INLINE
+    );
+
+    vkCmdBindPipeline(
+        context->cmd_buffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        context->pipeline
+    );
+
+    // setting necessary dynamic state
+    vkCmdSetViewport(context->cmd_buffer, 0, 1, &context->viewport);
+    vkCmdSetScissor(context->cmd_buffer, 0, 1, &context->scissor);
+
+    vkCmdDraw(context->cmd_buffer, 3, 1, 0, 0);
+
+    vkCmdEndRenderPass(context->cmd_buffer);
+
+    /* ------------------------------------------------------------- */
+
+    return vkEndCommandBuffer(context->cmd_buffer) == VK_SUCCESS;
 }
 
 void vulkan_engine_create(RenderContext *context) {
-    SwapChainDescriptor *chain = &context->swapchain;
-
     if (!vulkan_instance_create(context))
         panic("failed to create instance");
 
-    if (vulkan_debugger_create(context))
+    if (!vulkan_debugger_create(context))
         panic("failed to attach debugger");
 
-    if (!create_most_suitable_device(context))
+    if (!vulkan_most_suitable_device_create(context))
         panic("failed to setup any GPU");
-
-    VkResult swapchain_fail;
-    swapchain_fail = vkGetSwapchainImagesKHR(
-        context->driver,
-        chain->data,
-        &chain->format_count,
-        NULL
-    );
-
-    if (swapchain_fail)
-        panic("failed to read count of swapchain images");
-
-    chain->images = malloc(chain->image_count * sizeof(VkImage));
-    swapchain_fail = vkGetSwapchainImagesKHR(
-        context->driver,
-        chain->data,
-        &chain->format_count,
-        chain->images
-    );
-
-    if (swapchain_fail)
-        panic("failed to read swapchain images");
 
     if (!vulkan_image_views_create(context))
         panic("failed to create image views");
 
+    if (!vulkan_render_pass_create(context))
+        panic("failed to create render pass");
+
     if (!vulkan_pipeline_create(context))
         panic("failed to create a pipeline");
+
+    if (!vulkan_framebuffers_create(context))
+        panic("failed to create framebuffer");
+
+    if (!vulkan_cmd_pool_create(context))
+        panic("failed to create command pool");
+
+    if (!vulkan_cmd_buffer_alloc(context))
+        panic("failed to create command buffer");
+
+    if (!vulkan_sync_primitives_create(context))
+        panic("failed to create synchronization primitives");
 
     info("vulkan engine created");
 }
 
 // FIXME: layers appear to be unloading twice
 void vulkan_engine_destroy(RenderContext *context) {
-    vulkan_swapchain_destroy(context->driver, &context->swapchain);
+    vulkan_sync_primitives_destroy(context);
+    vkDestroyCommandPool(context->driver, context->cmd_pool, NULL);
+    vulkan_framebuffers_destroy(context->driver, &context->swapchain);
+    vulkan_pipeline_destroy(context);
+    vkDestroyRenderPass(context->driver, context->render_pass, NULL);
+    vulkan_swapchain_destroy(context);
     vkDestroyDevice(context->driver, NULL);
-    vkDestroySurfaceKHR(context->instance, context->surface, NULL);
     DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
+    vkDestroySurfaceKHR(context->instance, context->surface, NULL);
     vkDestroyInstance(context->instance, NULL);
-    vulkan_valididation_destroy(&context->validation);
+
+    if (get_log_level() == LOG_TRACE) {
+        vulkan_valididation_destroy(&context->validation);
+    }
 
     info("vulkan engine destroyed");
 }
 
+// 1. Wait for the previous frame to finish
+// 2. Acquire an image from the swap chain
+// 3. Record a command buffer which draws the scene onto that image
+// 4. Submit the recorded command buffer
+// 5. Present the swap chain image
+
 void vulkan_engine_render(RenderContext* context) {
+    vkWaitForFences(context->driver, 1, &context->in_flight_fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(context->driver, 1, &context->in_flight_fence);
+
+    u32 image_idx;
+    VkResult acquire_fail = vkAcquireNextImageKHR(
+        context->driver,
+        context->swapchain.data,
+        UINT64_MAX,
+        context->image_available,
+        VK_NULL_HANDLE,
+        &image_idx
+    );
+
+    if (acquire_fail) {
+        warn("failed to acquire next image in swapchain");
+        return;
+    }
+
+    vkResetCommandBuffer(context->cmd_buffer, 0);
+    vulkan_record_cmd_buffer(context, image_idx);
+
+    VkSemaphore wait_semaphores[1] = { context->image_available };
+    VkPipelineStageFlags wait_stages[1] = {
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+    };
+
+    // NOTE: each entry in `wait_stages` corresponds to a semaphore in `wait_semaphores`
+    VkSemaphore signal_semaphores[1] = { context->render_finished };
+
+    VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pWaitSemaphores = wait_semaphores,
+        .waitSemaphoreCount = 1,
+        .pWaitDstStageMask = wait_stages,
+        .pCommandBuffers = &context->cmd_buffer,
+        .commandBufferCount = 1,
+        .pSignalSemaphores = signal_semaphores,
+        .signalSemaphoreCount = 1
+    };
+
+    if (vkQueueSubmit(context->queue, 1, &submit_info, context->in_flight_fence)) {
+        warn("failed to submit queue tasks");
+        return;
+    }
+
+    VkSwapchainKHR swapchains[1] = { context->swapchain.data };
+
+    VkPresentInfoKHR present_info = {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .pWaitSemaphores = signal_semaphores,
+        .waitSemaphoreCount = 1,
+        .pSwapchains = swapchains,
+        .swapchainCount = 1,
+        .pImageIndices = &image_idx
+    };
+
+    if (vkQueuePresentKHR(context->queue, &present_info))
+        return;
 }
