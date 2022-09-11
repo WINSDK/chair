@@ -2,7 +2,6 @@
 
 #include <stdlib.h>
 #include <SDL2/SDL_vulkan.h>
-#include <vulkan/vulkan_core.h>
 
 const char** get_required_extensions(SDL_Window *window, u32 *count) {
     SDL_Vulkan_GetInstanceExtensions(window, count, NULL);
@@ -200,7 +199,8 @@ bool find_queue_families(RenderContext *context) {
     return false;
 }
 
-void vulkan_valid_layers_create(ValidationLayers *valid) {
+/// Store the names of all available layers.
+void vulkan_valididation_create(ValidationLayers *valid) {
     vkEnumerateInstanceLayerProperties(&valid->layer_count, NULL);
 
     valid->data = malloc(valid->layer_count * sizeof(VkLayerProperties));
@@ -213,28 +213,32 @@ void vulkan_valid_layers_create(ValidationLayers *valid) {
     trace_array(valid->layers, valid->layer_count, "layers enabled: ");
 }
 
+void vulkan_valididation_destroy(ValidationLayers *valid) {
+    free(valid->layers);
+    free(valid->data);
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT type,
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
     void* user_data) {
 
-    switch (severity) {
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
-                trace("vulkan: %s", callback_data->pMessage);
-                break;
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
-                info("vulkan: %s", callback_data->pMessage);
-                break;
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
-                warn("vulkan: %s", callback_data->pMessage);
-                break;
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
-                error("vulkan: %s", callback_data->pMessage);
-                break;
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT:
-                panic("vulkan: %s", callback_data->pMessage);
-                break;
+    if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT ||
+        get_log_level() == LOG_TRACE) {
+        printf("[vulkan] %s\n", callback_data->pMessage);
+    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT ||
+        get_log_level() >= LOG_INFO) {
+        printf("[vulkan] %s\n", callback_data->pMessage);
+    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT ||
+        get_log_level() >= LOG_WARN) {
+        printf("[vulkan] %s\n", callback_data->pMessage);
+    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ||
+        get_log_level() >= LOG_ERROR) {
+        printf("[vulkan] %s\n", callback_data->pMessage);
+    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT) {
+        printf("[vulkan] %s\n", callback_data->pMessage);
+        exit(1);
     }
 
     return VK_FALSE;
@@ -291,13 +295,13 @@ void create_swapchain_present_extent(RenderContext *context) {
             &height
         );
 
-        context->extent.width = clamp(
+        context->dimensions.width = clamp(
             (u32)width,
             capabilities->minImageExtent.width,
             capabilities->maxImageExtent.width
         );
 
-        context->extent.height = clamp(
+        context->dimensions.height = clamp(
             (u32)height,
             capabilities->minImageExtent.height,
             capabilities->maxImageExtent.height
@@ -306,11 +310,11 @@ void create_swapchain_present_extent(RenderContext *context) {
         return;
     }
 
-    context->extent = capabilities->currentExtent;
+    context->dimensions = capabilities->currentExtent;
 }
 
 /// Try to create a swapchain with at least one format.
-bool vulkan_create_swapchain(RenderContext *context) {
+bool vulkan_swapchain_create(RenderContext *context) {
     SwapChainDescriptor* chain = &context->swapchain;
     VkSurfaceCapabilitiesKHR* capabilities = &chain->capabilities;
 
@@ -364,12 +368,13 @@ bool vulkan_create_swapchain(RenderContext *context) {
     // NOTE: may want to use `VK_IMAGE_USAGE_TRANSFER_DST_BIT` for image usage
     // as it allows rendering to a seperate image first to perform
     // post-processing
+
     VkSwapchainCreateInfoKHR create_info = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = context->surface,
         .minImageCount = count,
         .imageFormat = context->surface_format.format,
-        .imageExtent = context->extent,
+        .imageExtent = context->dimensions,
         .imageArrayLayers = 1,
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .preTransform = capabilities->currentTransform,
@@ -405,8 +410,18 @@ bool vulkan_create_swapchain(RenderContext *context) {
     return true;
 }
 
+void vulkan_swapchain_destroy(VkDevice driver, SwapChainDescriptor* chain) {
+    vkDestroySwapchainKHR(driver, chain->data, NULL);
+
+    free(chain->images);
+    free(chain->formats);
+    free(chain->views);
+
+    info("vulkan swapchain destroyed");
+}
+
 /// Try to create a device, associated queue, present queue and surface.
-bool vulkan_create_device(RenderContext *context) {
+bool vulkan_device_create(RenderContext *context) {
     // find a simple queue that can handle at least graphics for now
     if (!find_queue_families(context)) {
         warn("couldn't find any queue families");
@@ -498,10 +513,10 @@ bool create_most_suitable_device(RenderContext *context) {
         if (!matches_device_requirements(context->device))
             continue;
 
-        if (!vulkan_create_device(context))
+        if (!vulkan_device_create(context))
             continue;
 
-        if (!vulkan_create_swapchain(context))
+        if (!vulkan_swapchain_create(context))
             continue;
 
         free(devices);
@@ -521,10 +536,10 @@ bool create_most_suitable_device(RenderContext *context) {
         if (!matches_device_requirements(context->device))
             continue;
 
-        if (!vulkan_create_device(context))
+        if (!vulkan_device_create(context))
             continue;
 
-        if (!vulkan_create_swapchain(context))
+        if (!vulkan_swapchain_create(context))
             continue;
 
         free(devices);
@@ -573,7 +588,7 @@ bool vulkan_instance_create(RenderContext *context) {
 
     if (get_log_level() == LOG_TRACE) {
         ValidationLayers* valid = &context->validation;
-        vulkan_valid_layers_create(valid);
+        vulkan_valididation_create(valid);
 
         // enable all supported layers when for debugging
         instance_create_info.enabledLayerCount = valid->layer_count;
@@ -591,6 +606,218 @@ bool vulkan_instance_create(RenderContext *context) {
     free(extensions);
 
     return x;
+}
+
+bool vulkan_image_views_create(RenderContext *context) {
+    SwapChainDescriptor *chain = &context->swapchain;
+
+    chain->views = malloc(chain->image_count * sizeof(VkImageView));
+
+    VkImageViewCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = context->surface_format.format,
+        .components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .subresourceRange.baseMipLevel = 0,
+        .subresourceRange.levelCount = 1,
+        .subresourceRange.baseArrayLayer = 0,
+        .subresourceRange.layerCount = 1
+    };
+
+    for (u32 idx = 0; idx < chain->image_count; idx++) {
+        create_info.image = chain->images[idx];
+        if (vkCreateImageView(context->driver, &create_info, NULL, &chain->views[idx]))
+            return false;
+    }
+
+    return true;
+}
+
+VkResult vulkan_shader_module_create(RenderContext *context,
+                                     char* binary,
+                                     u32 binary_size,
+                                     VkShaderModule *module) {
+    VkShaderModuleCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = binary_size,
+        .pCode = (u32*)binary
+    };
+
+    return vkCreateShaderModule(context->driver, &create_info, NULL, module);
+}
+
+bool vulkan_pipeline_create(RenderContext *context) {
+    u32 vert_size, frag_size;
+
+    char* vert_bin = read_binary("./target/shaders/shader.vert.spv", &vert_size);
+    char* frag_bin = read_binary("./target/shaders/shader.frag.spv", &frag_size);
+
+    if (vert_bin == NULL || frag_bin == NULL) {
+        error("failed to read shader source");
+        return false;
+    }
+
+    VkShaderModule vert, frag;
+    if (vulkan_shader_module_create(context, vert_bin, vert_size, &vert) ||
+        vulkan_shader_module_create(context, frag_bin, frag_size, &frag)) {
+        error("failed to create shader module");
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo vert_shader_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .module = frag,
+        .pName = "main"
+    };
+
+    VkPipelineShaderStageCreateInfo frag_shader_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_VERTEX_BIT,
+        .module = vert,
+        .pName = "main"
+    };
+
+    VkPipelineShaderStageCreateInfo shader_stages[2] = {
+        vert_shader_create_info,
+        frag_shader_create_info
+    };
+
+    VkDynamicState *dynamic_states = malloc(2 * sizeof(VkDynamicState));
+
+    dynamic_states[0] = VK_DYNAMIC_STATE_VIEWPORT;
+    dynamic_states[1] = VK_DYNAMIC_STATE_SCISSOR;
+
+    VkPipelineDynamicStateCreateInfo dynamic_create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .pDynamicStates = dynamic_states,
+        .dynamicStateCount = 2
+    };
+
+    // TODO: `pVertexBindingDescriptions` and `pVertexAttributeDescriptions`
+    VkPipelineVertexInputStateCreateInfo vertex_input_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 0,
+        .pVertexBindingDescriptions = NULL,
+        .vertexAttributeDescriptionCount = 0,
+        .pVertexAttributeDescriptions = NULL
+    };
+
+    // VK_PRIMITIVE_TOPOLOGY_POINT_LIST: points from vertices
+    //
+    // VK_PRIMITIVE_TOPOLOGY_LINE_LIST: line from every 2 vertices without
+    //
+    // reuse VK_PRIMITIVE_TOPOLOGY_LINE_STRIP: the end vertex of every line is
+    // used as start vertex for the next line
+    //
+    // VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST: triangle from every 3 vertices
+    //
+    // without reuse VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP: the second and third
+    // vertex of every triangle are used as first two vertices of the next
+    // triangle
+
+    // Normally, the vertices are loaded from the vertex buffer by index in
+    // sequential order, but with an element buffer you can specify the indices
+    // to use yourself. This allows you to perform optimizations like reusing
+    // vertices. If you set the primitiveRestartEnable member to VK_TRUE, then
+    // it's possible to break up lines and triangles in the _STRIP topology
+    // modes by using a special index of 0xFFFF or 0xFFFFFFFF.
+
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .primitiveRestartEnable = VK_FALSE,
+    };
+
+    // where in the framebuffer to render to
+    VkViewport viewport = {
+        .x = 0.0,
+        .y = 0.0,
+        .width = (float)context->dimensions.width,
+        .height = (float)context->dimensions.height,
+        .minDepth = 0.0,
+        .maxDepth = 1.0
+    };
+
+    // region of the viewport to actually display
+    VkRect2D scissor = {
+        .offset = {0, 0},
+        .extent = context->dimensions
+    };
+
+    VkPipelineViewportStateCreateInfo viewport_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .pViewports = &viewport,
+        .viewportCount = 1,
+        .pScissors = &scissor,
+        .scissorCount = 1
+    };
+
+
+    // `polygonMode` can be used with `VK_POLYGON_MODE_LINE` for wireframe
+    //
+    // !!! does require specific GPU features
+    VkPipelineRasterizationStateCreateInfo rasterizer_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .depthClampEnable = VK_FALSE,
+        .rasterizerDiscardEnable = VK_FALSE,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .lineWidth = 1.0,
+        .cullMode = VK_CULL_MODE_BACK_BIT,
+        .frontFace = VK_FRONT_FACE_CLOCKWISE,
+        .depthBiasEnable = VK_FALSE
+    };
+
+    VkPipelineMultisampleStateCreateInfo multisampling_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .sampleShadingEnable = VK_FALSE,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT
+    };
+
+    VkPipelineColorBlendAttachmentState color_blend_attachment = {
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                          VK_COLOR_COMPONENT_G_BIT |
+                          VK_COLOR_COMPONENT_B_BIT |
+                          VK_COLOR_COMPONENT_A_BIT,
+        .blendEnable = VK_FALSE,
+    };
+
+    VkPipelineColorBlendStateCreateInfo color_blend_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .logicOpEnable = VK_FALSE,
+        .attachmentCount = 1,
+        .pAttachments = &color_blend_attachment
+    };
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 0,
+        .pSetLayouts = NULL,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = NULL
+    };
+
+    VkPipelineLayout pipeline_layout;
+    if (vkCreatePipelineLayout(context->driver, &pipeline_layout_info, NULL, &pipeline_layout))
+        return false;
+
+    vkDestroyPipelineLayout(context->driver, pipeline_layout, NULL);
+
+    free(dynamic_states);
+    free(vert_bin);
+    free(frag_bin);
+
+    vkDestroyShaderModule(context->driver, vert, NULL);
+    vkDestroyShaderModule(context->driver, frag, NULL);
+
+    return true;
+}
+
+void vulkan_pipeline_destroy() {
 }
 
 void vulkan_engine_create(RenderContext *context) {
@@ -627,21 +854,13 @@ void vulkan_engine_create(RenderContext *context) {
     if (swapchain_fail)
         panic("failed to read swapchain images");
 
+    if (!vulkan_image_views_create(context))
+        panic("failed to create image views");
+
+    if (!vulkan_pipeline_create(context))
+        panic("failed to create a pipeline");
+
     info("vulkan engine created");
-}
-
-void vulkan_swapchain_destroy(VkDevice driver, SwapChainDescriptor* chain) {
-    vkDestroySwapchainKHR(driver, chain->data, NULL);
-
-    free(chain->images);
-    free(chain->formats);
-
-    info("vulkan swapchain destroyed");
-}
-
-void vulkan_valid_destroy(ValidationLayers *valid) {
-    free(valid->layers);
-    free(valid->data);
 }
 
 // FIXME: layers appear to be unloading twice
@@ -651,7 +870,7 @@ void vulkan_engine_destroy(RenderContext *context) {
     vkDestroySurfaceKHR(context->instance, context->surface, NULL);
     DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
     vkDestroyInstance(context->instance, NULL);
-    vulkan_valid_destroy(&context->validation);
+    vulkan_valididation_destroy(&context->validation);
 
     info("vulkan engine destroyed");
 }

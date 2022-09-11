@@ -31,6 +31,9 @@ typedef struct {
     /* Images received from the swapchain */
     VkImage* images;
 
+    /* View's into the swapchain's images */
+    VkImageView *views;
+
     /* Number of images in the swapchain */
     u32 image_count;
 } SwapChainDescriptor;
@@ -90,7 +93,7 @@ typedef struct {
     VkSurfaceFormatKHR surface_format;
 
     /* Resolution of the swap chain images */
-    VkExtent2D extent;
+    VkExtent2D dimensions;
 } RenderContext;
 
 void vulkan_engine_create(RenderContext *context);

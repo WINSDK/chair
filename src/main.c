@@ -1,4 +1,3 @@
-#include "chair.h"
 #include "render.h"
 
 #include <stdio.h>
@@ -35,8 +34,14 @@ int main(int argc, char *argv[]) {
 
     RenderContext context = {};
 
+    struct timespec t = now();
     sdl_renderer_create(&context);
     vulkan_engine_create(&context);
+
+    t = time_elapsed(t);
+    info("%lld.%.9ld seconds elapsed to init vulkan",
+         (long long)t.tv_sec, t.tv_nsec);
+
     event_loop(&context);
     vulkan_engine_destroy(&context);
     sdl_renderer_destroy(&context);

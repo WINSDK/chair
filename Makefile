@@ -22,13 +22,13 @@ DEBUGGER := ./target/debug/main --trace
 endif
 
 SRCS = $(wildcard src/*.c)
+
+SHADERS := $(wildcard src/*.vert) $(wildcard src/*.frag)
+SHADERS := $(SHADERS:src/%=target/shaders/%.spv)
+
 SAN_OBJS = $(SRCS:src/%.c=target/sanitize/%.o)
 DEB_OBJS = $(SRCS:src/%.c=target/debug/%.o)
 REL_OBJS = $(SRCS:src/%.c=target/release/%.o)
-
-ifeq ($(words $(SRCS)),0)
-$(error there are no input files)
-endif
 
 all: CFLAGS += -march=native -O2
 all: target/release/main
@@ -46,25 +46,28 @@ release: CFLAGS += -march=native -O2
 release: target/release/main
 	./target/release/main
 
-configure_sanitize:
-	@mkdir -p target target/sanitize
-
-configure_debug:
-	@mkdir -p target target/debug
-
-configure_release:
-	@mkdir -p target target/release
-
 clean:
 	rm -rf target compile_commands.json
 
-target/sanitize/main: configure_sanitize $(SAN_OBJS)
+target/shaders:
+	@mkdir -p $@
+
+target/sanitize:
+	@mkdir -p $@
+
+target/debug:
+	@mkdir -p $@
+
+target/release:
+	@mkdir -p $@
+
+target/sanitize/main: target/sanitize target/shaders $(SAN_OBJS) $(SHADERS)
 	$(CC) $(LDFLAGS) $(LIBS) $(SAN_OBJS) -o $@
 
-target/debug/main: configure_debug $(DEB_OBJS)
+target/debug/main: target/debug target/shaders $(DEB_OBJS) $(SHADERS)
 	$(CC) $(LDFLAGS) $(LIBS) $(DEB_OBJS) -o $@
 
-target/release/main: configure_release $(REL_OBJS)
+target/release/main: target/release target/shaders $(REL_OBJS) $(SHADERS)
 	$(CC) $(LDFLAGS) $(LIBS) $(REL_OBJS) -o $@
 	strip --strip-all target/release/main
 
@@ -80,4 +83,10 @@ target/debug/%.o: src/%.c
 target/release/%.o: src/%.c
 	$(CC) $(CFLAGS) -Iincludes -o $@ -c $<
 
-.PHONY: all sanitize debug release configure_sanitize configure_debug configure_release
+target/shaders/%.vert.spv: src/%.vert
+	glslc -O -o $@ $<
+
+target/shaders/%.frag.spv: src/%.frag
+	glslc -O -o $@ $<
+
+.PHONY: all sanitize debug release clean
