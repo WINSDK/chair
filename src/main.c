@@ -30,7 +30,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    RenderContext context = {};
+    RenderContext context;
 
     struct timespec t = now();
     sdl_renderer_create(&context);

@@ -7,6 +7,8 @@
 
 #include "chair.h"
 
+#define MAX_FRAMES_LOADED 2
+
 /* One of the most important goals of Vulkan when it was created, is that
  * multi-GPU can be done “manually”. This is done by creating a VkDevice for
  * each of the GPUs you want to use, and then it is possible to share data
@@ -129,14 +131,19 @@ typedef struct {
     VkCommandPool cmd_pool;
 
     /* Commands to be submitted to the device queue */
-    VkCommandBuffer cmd_buffer;
+    VkCommandBuffer cmd_buffers[MAX_FRAMES_LOADED];
 
     /* ??? */
-    VkSemaphore image_available;
+    VkSemaphore images_available[MAX_FRAMES_LOADED];
+
     /* ??? */
-    VkSemaphore render_finished;
-    /* ??? */
-    VkFence in_flight_fence;
+    VkSemaphore renders_finished[MAX_FRAMES_LOADED];
+
+    /* Lock indicating whether or not the next frame can be drawn */
+    VkFence renderers_busy[MAX_FRAMES_LOADED];
+
+    /* Index of the current frame being renderer */
+    u32 frame;
 } RenderContext;
 
 void vulkan_engine_create(RenderContext *context);

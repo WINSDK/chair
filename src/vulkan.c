@@ -459,6 +459,7 @@ void vulkan_swapchain_destroy(RenderContext *context) {
 
     vkDestroySwapchainKHR(context->driver, chain->data, NULL);
 
+    free(chain->images);
     free(chain->formats);
     free(chain->views);
 }
@@ -1007,14 +1008,14 @@ bool vulkan_cmd_buffer_alloc(RenderContext *context) {
     VkCommandBufferAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = context->cmd_pool,
-        .commandBufferCount = 1,
+        .commandBufferCount = MAX_FRAMES_LOADED,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
     };
 
     return vkAllocateCommandBuffers(
         context->driver,
         &alloc_info,
-        &context->cmd_buffer
+        context->cmd_buffers
     ) == VK_SUCCESS;
 }
 
@@ -1028,42 +1029,51 @@ bool vulkan_sync_primitives_create(RenderContext *context) {
         .flags = VK_FENCE_CREATE_SIGNALED_BIT
     };
 
-    VkResult r1 = vkCreateSemaphore(
-        context->driver,
-        &semaphore_info,
-        NULL,
-        &context->image_available
-    );
+    for (u32 idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
+        VkResult r1 = vkCreateSemaphore(
+            context->driver,
+            &semaphore_info,
+            NULL,
+            &context->images_available[idx]
+        );
 
-    VkResult r2 = vkCreateSemaphore(
-        context->driver,
-        &semaphore_info,
-        NULL,
-        &context->render_finished
-    );
+        VkResult r2 = vkCreateSemaphore(
+            context->driver,
+            &semaphore_info,
+            NULL,
+            &context->renders_finished[idx]
+        );
 
-    VkResult r3 = vkCreateFence(
-        context->driver,
-        &fence_info,
-        NULL,
-        &context->in_flight_fence
-    );
+        VkResult r3 = vkCreateFence(
+            context->driver,
+            &fence_info,
+            NULL,
+            &context->renderers_busy[idx]
+        );
 
-    return (r1 & r2 & r3) == VK_SUCCESS;
+        if ((r1 & r2 & r3) != VK_SUCCESS)
+            return false;
+    }
+
+    return true;
 }
 
 void vulkan_sync_primitives_destroy(RenderContext *context) {
-    vkDestroySemaphore(context->driver, context->image_available, NULL);
-    vkDestroySemaphore(context->driver, context->render_finished, NULL);
-    vkDestroyFence(context->driver, context->in_flight_fence, NULL);
+    for (u32 idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
+        vkDestroySemaphore(context->driver, context->images_available[idx], NULL);
+        vkDestroySemaphore(context->driver, context->renders_finished[idx], NULL);
+        vkDestroyFence(context->driver, context->renderers_busy[idx], NULL);
+    }
 }
 
 bool vulkan_record_cmd_buffer(RenderContext *context, u32 image_idx) {
+    VkCommandBuffer frame_cmd_buffer = context->cmd_buffers[context->frame];
+
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     };
 
-    if (vkBeginCommandBuffer(context->cmd_buffer, &begin_info))
+    if (vkBeginCommandBuffer(frame_cmd_buffer, &begin_info))
         return false;
 
     /* ------------------------ render pass ------------------------ */
@@ -1082,28 +1092,28 @@ bool vulkan_record_cmd_buffer(RenderContext *context, u32 image_idx) {
     };
 
     vkCmdBeginRenderPass(
-        context->cmd_buffer,
+        frame_cmd_buffer,
         &render_pass_info,
         VK_SUBPASS_CONTENTS_INLINE
     );
 
     vkCmdBindPipeline(
-        context->cmd_buffer,
+        frame_cmd_buffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
         context->pipeline
     );
 
     // setting necessary dynamic state
-    vkCmdSetViewport(context->cmd_buffer, 0, 1, &context->viewport);
-    vkCmdSetScissor(context->cmd_buffer, 0, 1, &context->scissor);
+    vkCmdSetViewport(frame_cmd_buffer, 0, 1, &context->viewport);
+    vkCmdSetScissor(frame_cmd_buffer, 0, 1, &context->scissor);
 
-    vkCmdDraw(context->cmd_buffer, 3, 1, 0, 0);
+    vkCmdDraw(frame_cmd_buffer, 3, 1, 0, 0);
 
-    vkCmdEndRenderPass(context->cmd_buffer);
+    vkCmdEndRenderPass(frame_cmd_buffer);
 
     /* ------------------------------------------------------------- */
 
-    return vkEndCommandBuffer(context->cmd_buffer) == VK_SUCCESS;
+    return vkEndCommandBuffer(frame_cmd_buffer) == VK_SUCCESS;
 }
 
 void vulkan_engine_create(RenderContext *context) {
@@ -1137,6 +1147,8 @@ void vulkan_engine_create(RenderContext *context) {
     if (!vulkan_sync_primitives_create(context))
         panic("failed to create synchronization primitives");
 
+    context->frame = 0;
+
     info("vulkan engine created");
 }
 
@@ -1169,49 +1181,72 @@ void vulkan_engine_destroy(RenderContext *context) {
 // 5. Present the swap chain image
 
 void vulkan_engine_render(RenderContext* context) {
-    vkWaitForFences(context->driver, 1, &context->in_flight_fence, VK_TRUE, UINT64_MAX);
-    vkResetFences(context->driver, 1, &context->in_flight_fence);
+    vkWaitForFences(
+        context->driver,
+        1,
+        &context->renderers_busy[context->frame],
+        VK_TRUE,
+        UINT64_MAX
+    );
+
+    vkResetFences(
+        context->driver,
+        1,
+        &context->renderers_busy[context->frame]
+    );
 
     u32 image_idx;
     VkResult acquire_fail = vkAcquireNextImageKHR(
         context->driver,
         context->swapchain.data,
         UINT64_MAX,
-        context->image_available,
+        context->images_available[context->frame],
         VK_NULL_HANDLE,
         &image_idx
     );
 
     if (acquire_fail) {
         warn("failed to acquire next image in swapchain");
-        return;
+        goto next;
     }
 
-    vkResetCommandBuffer(context->cmd_buffer, 0);
+    vkResetCommandBuffer(context->cmd_buffers[context->frame], 0);
     vulkan_record_cmd_buffer(context, image_idx);
 
-    VkSemaphore wait_semaphores[1] = { context->image_available };
+    VkSemaphore wait_semaphores[1] = {
+        context->images_available[context->frame]
+    };
+
     VkPipelineStageFlags wait_stages[1] = {
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
     };
 
     // NOTE: each entry in `wait_stages` corresponds to a semaphore in `wait_semaphores`
-    VkSemaphore signal_semaphores[1] = { context->render_finished };
+    VkSemaphore signal_semaphores[1] = { 
+        context->renders_finished[context->frame]
+    };
 
     VkSubmitInfo submit_info = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pWaitSemaphores = wait_semaphores,
         .waitSemaphoreCount = 1,
         .pWaitDstStageMask = wait_stages,
-        .pCommandBuffers = &context->cmd_buffer,
+        .pCommandBuffers = &context->cmd_buffers[context->frame],
         .commandBufferCount = 1,
         .pSignalSemaphores = signal_semaphores,
         .signalSemaphoreCount = 1
     };
 
-    if (vkQueueSubmit(context->queue, 1, &submit_info, context->in_flight_fence)) {
+    VkResult submit_fail = vkQueueSubmit(
+        context->queue,
+        1,
+        &submit_info,
+        context->renderers_busy[context->frame]
+    );
+
+    if (submit_fail) {
         warn("failed to submit queue tasks");
-        return;
+        goto next;
     }
 
     VkSwapchainKHR swapchains[1] = { context->swapchain.data };
@@ -1225,6 +1260,11 @@ void vulkan_engine_render(RenderContext* context) {
         .pImageIndices = &image_idx
     };
 
-    if (vkQueuePresentKHR(context->queue, &present_info))
-        return;
+    if (vkQueuePresentKHR(context->queue, &present_info)) {
+        warn("failed to present queue");
+        goto next;
+    }
+
+next:
+    context->frame = (context->frame + 1) % MAX_FRAMES_LOADED;
 }
