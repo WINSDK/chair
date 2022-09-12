@@ -1,9 +1,9 @@
+#include <bits/types/clockid_t.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdnoreturn.h>
 #include <stdatomic.h>
 #include <stdarg.h>
-#include <sys/stat.h>
 
 #include "chair.h"
 
@@ -96,17 +96,19 @@ noreturn void panic(const char *format, ...) {
     exit(1);
 }
 
-#if _POSIX_C_SOURCE >= 199309L
-#error no support for clocks
-#endif
+#define CLOCK_REALTIME			 0
+#define CLOCK_PROCESS_CPUTIME_ID 2
+#define CLOCK_THREAD_CPUTIME_ID	 3
+
+extern int clock_gettime(clockid_t __clock_id, struct timespec *__tp) __THROW;
 
 struct timespec now() {
     struct timespec time;
 
-#if _POSIX_THREAD_CPUTIME != 0
+#ifdef __linux__
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time);
 #else
-    clock_gettime(CLOCK_REALTIME, &time);
+    timespec_get(&time, TIME_UTC);
 #endif
 
     return time;
@@ -115,10 +117,10 @@ struct timespec now() {
 struct timespec time_elapsed(struct timespec start) {
     struct timespec temp, time;
 
-#if _POSIX_THREAD_CPUTIME != 0
+#ifdef __linux__
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time);
 #else
-    clock_gettime(CLOCK_REALTIME, &time);
+    timespec_get(&time, TIME_UTC);
 #endif
 
     if ((time.tv_nsec-start.tv_nsec)<0) {
@@ -137,9 +139,9 @@ char* read_binary(const char *path, u32 *bytes_read) {
     FILE *file = fopen(path, "rb");
     if (file == NULL) return NULL;
 
-    struct stat info;
-    if (stat(path, &info) == -1) return NULL;
-    size_t size = (size_t)info.st_size;
+    fseek(file, 0, SEEK_END);
+    size_t size = ftell(file);
+    rewind(file);
 
     char* bytes = malloc(size);
     *bytes_read = fread(bytes, 1, size, file);

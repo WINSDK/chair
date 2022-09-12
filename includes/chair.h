@@ -1,10 +1,10 @@
 #ifndef CHAIR_H_
-#define CHAIR_H_ 1
+#define CHAIR_H_
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <linux/time.h>
+#include <time.h>
 
 typedef uint8_t u8;
 typedef uint16_t u16;

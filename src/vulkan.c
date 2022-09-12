@@ -247,7 +247,10 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
 static PFN_vkCreateDebugUtilsMessengerEXT CreateDebugUtilsMessengerEXT;
 static PFN_vkDestroyDebugUtilsMessengerEXT DestroyDebugUtilsMessengerEXT;
 
-VkResult vulkan_debugger_create(RenderContext *context) {
+bool vulkan_debugger_create(RenderContext *context) {
+    if (get_log_level() < LOG_INFO)
+        return true;
+
     VkDebugUtilsMessengerCreateInfoEXT create_info = {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
         .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
@@ -279,6 +282,13 @@ VkResult vulkan_debugger_create(RenderContext *context) {
         NULL,
         &context->messenger
     ) == VK_SUCCESS;
+}
+
+void vulkan_debugger_destroy(RenderContext *context) {
+    if (get_log_level() < LOG_INFO)
+        return;
+
+    DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
 }
 
 /// Create a valid swapchain present extent.
@@ -363,7 +373,7 @@ bool vulkan_swapchain_create(RenderContext *context) {
     create_swapchain_present_extent(context);
 
     // number of images to be held in the swapchain
-    chain->image_count = capabilities->minImageCount + 1;
+    chain->image_count = capabilities->minImageCount + 2;
 
     // NOTE: may want to use `VK_IMAGE_USAGE_TRANSFER_DST_BIT` for image usage
     // as it allows rendering to a seperate image first to perform
@@ -444,10 +454,8 @@ bool vulkan_swapchain_create(RenderContext *context) {
 void vulkan_swapchain_destroy(RenderContext *context) {
     SwapChainDescriptor* chain = &context->swapchain;
 
-    for (u32 idx = 0; idx < chain->image_count; idx++) {
+    for (u32 idx = 0; idx < chain->image_count; idx++)
         vkDestroyImageView(context->driver, chain->views[idx], NULL);
-        vkDestroyImage(context->driver, chain->images[idx], NULL);
-    }
 
     vkDestroySwapchainKHR(context->driver, chain->data, NULL);
 
@@ -1134,6 +1142,8 @@ void vulkan_engine_create(RenderContext *context) {
 
 // FIXME: layers appear to be unloading twice
 void vulkan_engine_destroy(RenderContext *context) {
+    vkDeviceWaitIdle(context->driver);
+
     vulkan_sync_primitives_destroy(context);
     vkDestroyCommandPool(context->driver, context->cmd_pool, NULL);
     vulkan_framebuffers_destroy(context->driver, &context->swapchain);
@@ -1141,7 +1151,7 @@ void vulkan_engine_destroy(RenderContext *context) {
     vkDestroyRenderPass(context->driver, context->render_pass, NULL);
     vulkan_swapchain_destroy(context);
     vkDestroyDevice(context->driver, NULL);
-    DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
+    vulkan_debugger_destroy(context);
     vkDestroySurfaceKHR(context->instance, context->surface, NULL);
     vkDestroyInstance(context->instance, NULL);
 

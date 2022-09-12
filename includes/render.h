@@ -1,5 +1,5 @@
 #ifndef RENDER_H_
-#define RENDER_H_ 1
+#define RENDER_H_
 
 #include <stdbool.h>
 #include <vulkan/vulkan_core.h>

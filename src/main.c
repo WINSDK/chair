@@ -15,8 +15,6 @@ void event_loop(RenderContext *context) {
 
         vulkan_engine_render(context);
     }
-
-    return;
 }
 
 int main(int argc, char *argv[]) {
