@@ -5,19 +5,23 @@
 #include <stdlib.h>
 
 void event_loop(RenderContext *context) {
-    bool quit = false;
+    const u8 *board = SDL_GetKeyboardState(NULL);
     SDL_Event event;
 
-    while (!quit) {
-        while (SDL_PollEvent(&event) != 0) {
-            if (event.type == SDL_QUIT) return;
+    for (;;) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT)
+                return;
         }
+
+        if (board[SDL_SCANCODE_C] && board[SDL_SCANCODE_LCTRL])
+            break;
 
         vulkan_engine_render(context);
     }
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, const char *argv[]) {
     if (argc > 1) {
         if (strcmp(argv[1], "--error") == 0) {
             set_log_level(LOG_ERROR);

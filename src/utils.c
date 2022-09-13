@@ -17,24 +17,12 @@ void set_log_level(LogLevel level) {
     atomic_store(&LEVEL, level);
 }
 
-void info(const char *format, ...) {
-    if (get_log_level() < LOG_INFO) return;
-
-    va_list ap;
-    va_start(ap, format);
-    printf("[+] ");
-    vprintf(format, ap);
-    putchar('\n');
-    fflush(stdout);
-    va_end(ap);
-}
-
 void trace(const char *format, ...) {
     if (get_log_level() < LOG_TRACE) return;
 
     va_list ap;
     va_start(ap, format);
-    printf("[?] ");
+    printf("\x1b[1;38;5;4m[i]\e[m ");
     vprintf(format, ap);
     putchar('\n');
     fflush(stdout);
@@ -47,7 +35,7 @@ void trace_array(const char** msgs, u32 len, const char *format, ...) {
 
     va_list ap;
     va_start(ap, format);
-    printf("[?] ");
+    printf("\x1b[1;38;5;4m[i]\e[m ");
     vprintf(format, ap);
 
     printf("[");
@@ -63,12 +51,24 @@ void trace_array(const char** msgs, u32 len, const char *format, ...) {
     va_end(ap);
 }
 
+void info(const char *format, ...) {
+    if (get_log_level() < LOG_INFO) return;
+
+    va_list ap;
+    va_start(ap, format);
+    printf("\x1b[1;38;5;2m[?]\e[m ");
+    vprintf(format, ap);
+    putchar('\n');
+    fflush(stdout);
+    va_end(ap);
+}
+
 void warn(const char *format, ...) {
     if (get_log_level() < LOG_WARN) return;
 
     va_list ap;
     va_start(ap, format);
-    printf("[!] ");
+    printf("\x1b[1;38;5;3m[!]\e[m ");
     vprintf(format, ap);
     putchar('\n');
     fflush(stdout);
@@ -78,7 +78,7 @@ void warn(const char *format, ...) {
 void error(const char *format, ...) {
     va_list ap;
     va_start(ap, format);
-    printf("[-] ");
+    printf("\x1b[1;38;5;1m[-]\e[m ");
     vprintf(format, ap);
     putchar('\n');
     fflush(stdout);
@@ -88,7 +88,7 @@ void error(const char *format, ...) {
 noreturn void panic(const char *format, ...) {
     va_list ap;
     va_start(ap, format);
-    fprintf(stderr, "[-] thread panicked with: `");
+    fprintf(stderr, "\x1b[1;38;5;1m[-]\e[m thread panicked with: `");
     vfprintf(stderr, format, ap);
     fprintf(stderr, "`\n");
     fflush(stderr);

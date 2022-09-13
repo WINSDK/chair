@@ -224,21 +224,23 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
     void* user_data) {
 
-    if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT &&
-        get_log_level() >= LOG_TRACE) {
-        printf("[vulkan] %s\n", callback_data->pMessage);
-    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT &&
-        get_log_level() >= LOG_INFO) {
-        printf("[vulkan] %s\n", callback_data->pMessage);
-    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT &&
-        get_log_level() >= LOG_WARN) {
-        printf("[vulkan] %s\n", callback_data->pMessage);
-    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT &&
-        get_log_level() >= LOG_ERROR) {
-        printf("[vulkan] %s\n", callback_data->pMessage);
-    } else if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT) {
-        printf("[vulkan] %s\n", callback_data->pMessage);
-        exit(1);
+    char* msg = (char*)callback_data->pMessage;
+    if (strncmp(msg, "Validation Error: ", 18) == 0)
+        msg += 18;
+
+    switch (severity) {
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
+            printf("\x1b[1;38;5;4m[v]\e[m %s\n", msg);
+            break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
+            printf("\x1b[1;38;5;2m[v]\e[m %s\n", msg);
+            break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
+            printf("\x1b[1;38;5;3m[v]\e[m %s\n", msg);
+            break;
+        default:
+            printf("\x1b[1;38;5;1m[v]\e[m %s\n", msg);
+            exit(1);
     }
 
     return VK_FALSE;
@@ -294,17 +296,28 @@ void vulkan_debugger_destroy(RenderContext *context) {
 /// Create a valid swapchain present extent.
 void create_swapchain_present_extent(RenderContext *context) {
     VkSurfaceCapabilitiesKHR *capabilities = &context->swapchain.capabilities;
+    i32 width, height;
 
-    // some window managers set currentExtent.width to u32::MAX for some reason
-    // so we'll just make up a good resolution in this case
-    if (capabilities->currentExtent.width == 0xFFFFFFFF) {
-        i32 width, height;
+    SDL_Vulkan_GetDrawableSize(
+        context->window,
+        &width,
+        &height
+    );
+
+    // wait for next event if window is minimized
+    while (width == 0 || height == 0) {
         SDL_Vulkan_GetDrawableSize(
             context->window,
             &width,
             &height
         );
 
+        SDL_WaitEvent(NULL);
+    }
+
+    // some window managers set currentExtent.width to u32::MAX for some reason
+    // so we'll just make up a good resolution in this case
+    if (capabilities->currentExtent.width == 0xFFFFFFFF) {
         context->dimensions.width = clamp(
             (u32)width,
             capabilities->minImageExtent.width,
@@ -316,11 +329,70 @@ void create_swapchain_present_extent(RenderContext *context) {
             capabilities->minImageExtent.height,
             capabilities->maxImageExtent.height
         );
+    } else {
+        context->dimensions = capabilities->currentExtent;
+    }
+}
 
-        return;
+bool vulkan_image_views_create(RenderContext *context) {
+    SwapChainDescriptor *chain = &context->swapchain;
+
+    chain->views = malloc(chain->image_count * sizeof(VkImageView));
+
+    VkImageViewCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = context->surface_format.format,
+        .components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .subresourceRange.baseMipLevel = 0,
+        .subresourceRange.levelCount = 1,
+        .subresourceRange.baseArrayLayer = 0,
+        .subresourceRange.layerCount = 1
+    };
+
+    for (u32 idx = 0; idx < chain->image_count; idx++) {
+        create_info.image = chain->images[idx];
+        if (vkCreateImageView(context->driver, &create_info, NULL, &chain->views[idx]))
+            return false;
     }
 
-    context->dimensions = capabilities->currentExtent;
+    return true;
+}
+
+bool vulkan_framebuffers_create(RenderContext *context) {
+    SwapChainDescriptor *chain = &context->swapchain;
+
+    VkFramebufferCreateInfo framebuffer_info = {
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = context->render_pass,
+        .attachmentCount = 1,
+        .width = context->dimensions.width,
+        .height = context->dimensions.height,
+        .layers = 1
+    };
+
+    chain->framebuffers = malloc(chain->image_count * sizeof(VkFramebuffer));
+
+    for (u32 idx = 0; idx < chain->image_count; idx++) {
+        VkImageView attachments[1] = { chain->views[idx] };
+        framebuffer_info.pAttachments = attachments;
+
+        VkResult framebuffer_fail = vkCreateFramebuffer(
+            context->driver,
+            &framebuffer_info,
+            NULL,
+            &chain->framebuffers[idx]
+        );
+
+        if (framebuffer_fail)
+            return false;
+    }
+
+    return true;
 }
 
 /// Try to create a swapchain with at least one format.
@@ -455,13 +527,34 @@ void vulkan_swapchain_destroy(RenderContext *context) {
     SwapChainDescriptor* chain = &context->swapchain;
 
     for (u32 idx = 0; idx < chain->image_count; idx++)
+        vkDestroyFramebuffer(context->driver, chain->framebuffers[idx], NULL);
+
+    for (u32 idx = 0; idx < chain->image_count; idx++)
         vkDestroyImageView(context->driver, chain->views[idx], NULL);
 
     vkDestroySwapchainKHR(context->driver, chain->data, NULL);
 
+    free(chain->framebuffers);
     free(chain->images);
     free(chain->formats);
     free(chain->views);
+}
+
+bool vulkan_swapchain_recreate(RenderContext *context) {
+    vkDeviceWaitIdle(context->driver);
+
+    vulkan_swapchain_destroy(context);
+
+    if (!vulkan_swapchain_create(context))
+        return false;
+
+    if (!vulkan_image_views_create(context))
+        return false;
+
+    if (!vulkan_framebuffers_create(context))
+        return false;
+
+    return true;
 }
 
 /// Try to create a device, associated queue, present queue and surface.
@@ -650,35 +743,6 @@ bool vulkan_instance_create(RenderContext *context) {
     free(extensions);
 
     return x;
-}
-
-bool vulkan_image_views_create(RenderContext *context) {
-    SwapChainDescriptor *chain = &context->swapchain;
-
-    chain->views = malloc(chain->image_count * sizeof(VkImageView));
-
-    VkImageViewCreateInfo create_info = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = context->surface_format.format,
-        .components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
-        .components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
-        .components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
-        .components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
-        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-        .subresourceRange.baseMipLevel = 0,
-        .subresourceRange.levelCount = 1,
-        .subresourceRange.baseArrayLayer = 0,
-        .subresourceRange.layerCount = 1
-    };
-
-    for (u32 idx = 0; idx < chain->image_count; idx++) {
-        create_info.image = chain->images[idx];
-        if (vkCreateImageView(context->driver, &create_info, NULL, &chain->views[idx]))
-            return false;
-    }
-
-    return true;
 }
 
 VkResult vulkan_shader_module_create(RenderContext *context,
@@ -950,45 +1014,6 @@ void vulkan_pipeline_destroy(RenderContext *context) {
     free(context->dynamic_states);
 }
 
-bool vulkan_framebuffers_create(RenderContext *context) {
-    SwapChainDescriptor *chain = &context->swapchain;
-
-    VkFramebufferCreateInfo framebuffer_info = {
-        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-        .renderPass = context->render_pass,
-        .attachmentCount = 1,
-        .width = context->dimensions.width,
-        .height = context->dimensions.height,
-        .layers = 1
-    };
-
-    chain->framebuffers = malloc(chain->image_count * sizeof(VkFramebuffer));
-
-    for (u32 idx = 0; idx < chain->image_count; idx++) {
-        VkImageView attachments[1] = { chain->views[idx] };
-        framebuffer_info.pAttachments = attachments;
-
-        VkResult framebuffer_fail = vkCreateFramebuffer(
-            context->driver,
-            &framebuffer_info,
-            NULL,
-            &chain->framebuffers[idx]
-        );
-
-        if (framebuffer_fail)
-            return false;
-    }
-
-    return true;
-}
-
-void vulkan_framebuffers_destroy(VkDevice driver, SwapChainDescriptor *chain) {
-    for (u32 idx = 0; idx < chain->image_count; idx++)
-        vkDestroyFramebuffer(driver, chain->framebuffers[idx], NULL);
-
-    free(chain->framebuffers);
-}
-
 bool vulkan_cmd_pool_create(RenderContext *context) {
     VkCommandPoolCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -1158,7 +1183,6 @@ void vulkan_engine_destroy(RenderContext *context) {
 
     vulkan_sync_primitives_destroy(context);
     vkDestroyCommandPool(context->driver, context->cmd_pool, NULL);
-    vulkan_framebuffers_destroy(context->driver, &context->swapchain);
     vulkan_pipeline_destroy(context);
     vkDestroyRenderPass(context->driver, context->render_pass, NULL);
     vulkan_swapchain_destroy(context);
@@ -1189,12 +1213,6 @@ void vulkan_engine_render(RenderContext* context) {
         UINT64_MAX
     );
 
-    vkResetFences(
-        context->driver,
-        1,
-        &context->renderers_busy[context->frame]
-    );
-
     u32 image_idx;
     VkResult acquire_fail = vkAcquireNextImageKHR(
         context->driver,
@@ -1205,10 +1223,23 @@ void vulkan_engine_render(RenderContext* context) {
         &image_idx
     );
 
-    if (acquire_fail) {
+    if (acquire_fail == VK_ERROR_OUT_OF_DATE_KHR ||
+        acquire_fail == VK_SUBOPTIMAL_KHR) {
+        if (!vulkan_swapchain_recreate(context)) {
+            warn("failed to recreate swapchain");
+        }
+
+        return;
+    } else if (acquire_fail) {
         warn("failed to acquire next image in swapchain");
         goto next;
     }
+
+    vkResetFences(
+        context->driver,
+        1,
+        &context->renderers_busy[context->frame]
+    );
 
     vkResetCommandBuffer(context->cmd_buffers[context->frame], 0);
     vulkan_record_cmd_buffer(context, image_idx);

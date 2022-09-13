@@ -1,9 +1,10 @@
 #include "render.h"
 #include <SDL2/SDL.h>
+#include <signal.h>
 
 void sdl_renderer_create(RenderContext *context) {
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-    atexit(SDL_Quit);
 
     SDL_DisplayMode displayInfo;
     SDL_GetCurrentDisplayMode(0, &displayInfo);
