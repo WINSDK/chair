@@ -55,6 +55,17 @@ typedef struct {
 } ValidationLayers;
 
 typedef struct {
+    /* ??? */
+    VkSemaphore images_available;
+
+    /* ??? */
+    VkSemaphore renders_finished;
+
+    /* Lock indicating whether or not the next frame can be drawn */
+    VkFence renderers_busy;
+} Synchronization;
+
+typedef struct {
     /* SDL application state */
     SDL_Window *window;
 
@@ -133,22 +144,16 @@ typedef struct {
     /* Commands to be submitted to the device queue */
     VkCommandBuffer cmd_buffers[MAX_FRAMES_LOADED];
 
-    /* ??? */
-    VkSemaphore images_available[MAX_FRAMES_LOADED];
-
-    /* ??? */
-    VkSemaphore renders_finished[MAX_FRAMES_LOADED];
-
-    /* Lock indicating whether or not the next frame can be drawn */
-    VkFence renderers_busy[MAX_FRAMES_LOADED];
+    /* Synchronization objects required by `vk_engine_render`. */
+    Synchronization sync[MAX_FRAMES_LOADED];
 
     /* Index of the current frame being renderer */
     u32 frame;
 } RenderContext;
 
-void vulkan_engine_create(RenderContext *context);
-void vulkan_engine_destroy(RenderContext *context);
-void vulkan_engine_render(RenderContext *context);
+void vk_engine_create(RenderContext *context);
+void vk_engine_destroy(RenderContext *context);
+void vk_engine_render(RenderContext *context);
 
 void sdl_renderer_create(RenderContext *context);
 void sdl_renderer_destroy(RenderContext *context);

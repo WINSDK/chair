@@ -4,9 +4,10 @@
 #include <SDL2/SDL_vulkan.h>
 
 const char** get_required_extensions(SDL_Window *window, u32 *count) {
-    SDL_Vulkan_GetInstanceExtensions(window, count, NULL);
+    const char **extensions;
 
-    const char **extensions = malloc((*count + 2) * sizeof(char*));
+    SDL_Vulkan_GetInstanceExtensions(window, count, NULL);
+    extensions = malloc((*count + 2) * sizeof(char*));
     SDL_Vulkan_GetInstanceExtensions(window, count, extensions);
 
     // MacOS requires the `VK_KHR_PORTABILITY_subset` extension
@@ -21,13 +22,17 @@ const char** get_required_extensions(SDL_Window *window, u32 *count) {
 }
 
 const char** get_optional_extensions(u32 *count) {
+    u32 idx;
+    VkExtensionProperties* extensions;
+    const char** extensions_names;
+
     vkEnumerateInstanceExtensionProperties(NULL, count, NULL);
 
-    VkExtensionProperties* extensions = malloc(*count * sizeof(VkExtensionProperties));
+    extensions = malloc(*count * sizeof(VkExtensionProperties));
     vkEnumerateInstanceExtensionProperties(NULL, count, extensions);
 
-    const char** extensions_names = malloc(*count * sizeof(char*));
-    for (u32 idx = 0; idx < *count; idx++)
+    extensions_names = malloc(*count * sizeof(char*));
+    for (idx = 0; idx < *count; idx++)
         extensions_names[idx] = extensions[idx].extensionName;
 
     trace_array(extensions_names, *count, "available extensions: ");
@@ -37,11 +42,14 @@ const char** get_optional_extensions(u32 *count) {
 }
 
 bool matches_device_requirements(VkPhysicalDevice device) {
+    u32 count, idx;
+    VkResult extension_fail;
     VkPhysicalDeviceFeatures features;
+    VkExtensionProperties* extensions;
+    bool required_extensions_found;
+
     vkGetPhysicalDeviceFeatures(device, &features);
 
-    u32 count;
-    VkResult extension_fail;
     extension_fail = vkEnumerateDeviceExtensionProperties(
         device,
         NULL,
@@ -49,7 +57,7 @@ bool matches_device_requirements(VkPhysicalDevice device) {
         NULL
     );
 
-    VkExtensionProperties* extensions = malloc(count * sizeof(VkExtensionProperties));
+    extensions = malloc(count * sizeof(VkExtensionProperties));
     extension_fail = vkEnumerateDeviceExtensionProperties(
         device,
         NULL,
@@ -60,9 +68,9 @@ bool matches_device_requirements(VkPhysicalDevice device) {
     if (extension_fail)
         return false;
 
-    bool required_extensions_found = false;
-    for (u32 idx = 0; idx < count; idx++) {
-        const char* name = extensions[idx].extensionName;
+    required_extensions_found = false;
+    for (idx = 0; idx < count; idx++) {
+        const char *name = extensions[idx].extensionName;
 
         if (strcmp(name, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
             required_extensions_found = true;
@@ -76,7 +84,7 @@ bool matches_device_requirements(VkPhysicalDevice device) {
     if (get_log_level() == LOG_TRACE) {
         const char** extension_names = malloc(count * sizeof(char*));
 
-        for (u32 idx = 0; idx < count; idx++)
+        for (idx = 0; idx < count; idx++)
             extension_names[idx] = extensions[idx].extensionName;
 
         trace_array(extension_names, count, "available device extensions: ");
@@ -89,20 +97,23 @@ bool matches_device_requirements(VkPhysicalDevice device) {
 
 // Sets correct present mode on success. In the case of failing to find the
 // preferred present mode, the present mode is left untouched.
-bool try_preferred_present_mode(RenderContext *context) {
-    u32 count = 0;
+bool try_preferred_present_mode(RenderContext *ctx,
+                                VkPresentModeKHR *present_mode) {
+    u32 count, idx;
     VkResult present_support_result;
+    VkPresentModeKHR* present_modes;
+
     present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
-        context->device,
-        context->surface,
+        ctx->device,
+        ctx->surface,
         &count,
         NULL
     );
 
-    VkPresentModeKHR* present_modes = malloc(count * sizeof(VkPresentModeKHR*));
+    present_modes = malloc(count * sizeof(VkPresentModeKHR*));
     present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
-        context->device,
-        context->surface,
+        ctx->device,
+        ctx->surface,
         &count,
         present_modes
     );
@@ -115,7 +126,7 @@ bool try_preferred_present_mode(RenderContext *context) {
     if (get_log_level() == LOG_TRACE) {
         const char** names = malloc(count * sizeof(char*));
 
-        for (u32 idx = 0; idx < count; idx++) {
+        for (idx = 0; idx < count; idx++) {
             switch (present_modes[idx]) {
                 case VK_PRESENT_MODE_IMMEDIATE_KHR:
                     names[idx] = "VK_PRESENT_MODE_IMMEDIATE_KHR";
@@ -146,10 +157,8 @@ bool try_preferred_present_mode(RenderContext *context) {
     }
 
     // do nothing if the `preferred_present_mode` is supported
-    for (u32 idx = 0; idx < count; idx++) {
-        if (present_modes[idx] == VK_PRESENT_MODE_MAILBOX_KHR) {
-            context->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-
+    for (idx = 0; idx < count; idx++) {
+        if (present_modes[idx] == *present_mode) {
             free(present_modes);
             return true;
         }
@@ -161,16 +170,17 @@ bool try_preferred_present_mode(RenderContext *context) {
 
 // Sets correct swapchain format on success. In the case of failing to find the
 // preferred swapchain, the format is left untouched.
-bool try_preferred_swapchain_format(RenderContext* context) {
-    SwapChainDescriptor *chain = &context->swapchain;
+bool try_preferred_swapchain_format(RenderContext* ctx) {
+    u32 idx;
+    VkSurfaceFormatKHR surface_format;
 
-    for (u32 idx = 0; idx < chain->format_count; idx++) {
-        VkSurfaceFormatKHR surface_format = chain->formats[idx];
+    for (idx = 0; idx < ctx->swapchain.format_count; idx++) {
+        surface_format = ctx->swapchain.formats[idx];
 
-        if (chain->formats[idx].format == VK_FORMAT_B8G8R8A8_SRGB &&
+        if (ctx->swapchain.formats[idx].format == VK_FORMAT_B8G8R8A8_SRGB &&
             surface_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
 
-            context->surface_format = surface_format;
+            ctx->surface_format = surface_format;
             return true;
         }
     }
@@ -179,16 +189,17 @@ bool try_preferred_swapchain_format(RenderContext* context) {
 }
 
 /// Find a queue family that supports graphics.
-bool find_queue_families(RenderContext *context) {
-    u32 count;
-    vkGetPhysicalDeviceQueueFamilyProperties(context->device, &count, NULL);
+bool find_queue_families(RenderContext *ctx) {
+    u32 count, idx;
+    VkQueueFamilyProperties* families;
 
-    VkQueueFamilyProperties* families = malloc(count * sizeof(VkQueueFamilyProperties));
-    vkGetPhysicalDeviceQueueFamilyProperties(context->device, &count, families);
+    vkGetPhysicalDeviceQueueFamilyProperties(ctx->device, &count, NULL);
+    families = malloc(count * sizeof(VkQueueFamilyProperties));
+    vkGetPhysicalDeviceQueueFamilyProperties(ctx->device, &count, families);
 
-    for (u32 idx = 0; idx < count; idx++) {
+    for (idx = 0; idx < count; idx++) {
         if (families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            context->queue_family_indices = idx;
+            ctx->queue_family_indices = idx;
 
             free(families);
             return true;
@@ -200,31 +211,32 @@ bool find_queue_families(RenderContext *context) {
 }
 
 /// Store the names of all available layers.
-void vulkan_valididation_create(ValidationLayers *valid) {
-    vkEnumerateInstanceLayerProperties(&valid->layer_count, NULL);
+void vk_valididation_create(ValidationLayers *valid) {
+    u32 idx;
 
+    vkEnumerateInstanceLayerProperties(&valid->layer_count, NULL);
     valid->data = malloc(valid->layer_count * sizeof(VkLayerProperties));
     vkEnumerateInstanceLayerProperties(&valid->layer_count, valid->data);
 
     valid->layers = malloc(valid->layer_count * sizeof(char*));
-    for (u32 idx = 0; idx < valid->layer_count; idx++)
+    for (idx = 0; idx < valid->layer_count; idx++)
         valid->layers[idx] = valid->data[idx].layerName;
 
     trace_array(valid->layers, valid->layer_count, "layers enabled: ");
 }
 
-void vulkan_valididation_destroy(ValidationLayers *valid) {
+void vk_valididation_destroy(ValidationLayers *valid) {
     free(valid->layers);
     free(valid->data);
 }
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
+static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_handler(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT type,
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
     void* user_data) {
-
     char* msg = (char*)callback_data->pMessage;
+
     if (strncmp(msg, "Validation Error: ", 18) == 0)
         msg += 18;
 
@@ -249,7 +261,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_handler(
 static PFN_vkCreateDebugUtilsMessengerEXT CreateDebugUtilsMessengerEXT;
 static PFN_vkDestroyDebugUtilsMessengerEXT DestroyDebugUtilsMessengerEXT;
 
-bool vulkan_debugger_create(RenderContext *context) {
+bool vk_debugger_create(RenderContext *ctx) {
     if (get_log_level() < LOG_INFO)
         return true;
 
@@ -261,45 +273,45 @@ bool vulkan_debugger_create(RenderContext *context) {
         .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-        .pfnUserCallback = vulkan_debug_handler,
+        .pfnUserCallback = vk_debug_handler,
         .pUserData = NULL,
     };
 
     // find function loaded by `VK_EXT_DEBUG_UTILS_EXTENSION_NAME`
     CreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT)(
-        vkGetInstanceProcAddr(context->instance, "vkCreateDebugUtilsMessengerEXT")
+        vkGetInstanceProcAddr(ctx->instance, "vkCreateDebugUtilsMessengerEXT")
     );
 
     // find function loaded by `VK_EXT_DEBUG_UTILS_EXTENSION_NAME`
     DestroyDebugUtilsMessengerEXT = (PFN_vkDestroyDebugUtilsMessengerEXT)(
-        vkGetInstanceProcAddr(context->instance, "vkDestroyDebugUtilsMessengerEXT")
+        vkGetInstanceProcAddr(ctx->instance, "vkDestroyDebugUtilsMessengerEXT")
     );
 
-    if (CreateDebugUtilsMessengerEXT == NULL || DestroyDebugUtilsMessengerEXT == NULL)
+    if (!CreateDebugUtilsMessengerEXT || !DestroyDebugUtilsMessengerEXT)
         return VK_ERROR_EXTENSION_NOT_PRESENT;
 
     return CreateDebugUtilsMessengerEXT(
-        context->instance,
+        ctx->instance,
         &create_info,
         NULL,
-        &context->messenger
+        &ctx->messenger
     ) == VK_SUCCESS;
 }
 
-void vulkan_debugger_destroy(RenderContext *context) {
+void vk_debugger_destroy(RenderContext *ctx) {
     if (get_log_level() < LOG_INFO)
         return;
 
-    DestroyDebugUtilsMessengerEXT(context->instance, context->messenger, NULL);
+    DestroyDebugUtilsMessengerEXT(ctx->instance, ctx->messenger, NULL);
 }
 
 /// Create a valid swapchain present extent.
-void create_swapchain_present_extent(RenderContext *context) {
-    VkSurfaceCapabilitiesKHR *capabilities = &context->swapchain.capabilities;
+void create_swapchain_present_extent(RenderContext *ctx) {
+    VkSurfaceCapabilitiesKHR *capabilities = &ctx->swapchain.capabilities;
     i32 width, height;
 
     SDL_Vulkan_GetDrawableSize(
-        context->window,
+        ctx->window,
         &width,
         &height
     );
@@ -307,7 +319,7 @@ void create_swapchain_present_extent(RenderContext *context) {
     // wait for next event if window is minimized
     while (width == 0 || height == 0) {
         SDL_Vulkan_GetDrawableSize(
-            context->window,
+            ctx->window,
             &width,
             &height
         );
@@ -318,31 +330,32 @@ void create_swapchain_present_extent(RenderContext *context) {
     // some window managers set currentExtent.width to u32::MAX for some reason
     // so we'll just make up a good resolution in this case
     if (capabilities->currentExtent.width == 0xFFFFFFFF) {
-        context->dimensions.width = clamp(
+        ctx->dimensions.width = clamp(
             (u32)width,
             capabilities->minImageExtent.width,
             capabilities->maxImageExtent.width
         );
 
-        context->dimensions.height = clamp(
+        ctx->dimensions.height = clamp(
             (u32)height,
             capabilities->minImageExtent.height,
             capabilities->maxImageExtent.height
         );
     } else {
-        context->dimensions = capabilities->currentExtent;
+        ctx->dimensions = capabilities->currentExtent;
     }
 }
 
-bool vulkan_image_views_create(RenderContext *context) {
-    SwapChainDescriptor *chain = &context->swapchain;
+bool vk_image_views_create(RenderContext *ctx) {
+    u32 idx;
+    SwapChainDescriptor *chain = &ctx->swapchain;
 
     chain->views = malloc(chain->image_count * sizeof(VkImageView));
 
     VkImageViewCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = context->surface_format.format,
+        .format = ctx->surface_format.format,
         .components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
         .components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
         .components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -354,35 +367,38 @@ bool vulkan_image_views_create(RenderContext *context) {
         .subresourceRange.layerCount = 1
     };
 
-    for (u32 idx = 0; idx < chain->image_count; idx++) {
+    for (idx = 0; idx < chain->image_count; idx++) {
         create_info.image = chain->images[idx];
-        if (vkCreateImageView(context->driver, &create_info, NULL, &chain->views[idx]))
+        if (vkCreateImageView(ctx->driver, &create_info, NULL, &chain->views[idx]))
             return false;
     }
 
     return true;
 }
 
-bool vulkan_framebuffers_create(RenderContext *context) {
-    SwapChainDescriptor *chain = &context->swapchain;
+bool vk_framebuffers_create(RenderContext *ctx) {
+    u32 idx;
+    SwapChainDescriptor *chain = &ctx->swapchain;
+    VkImageView attachments[1];
+    VkResult framebuffer_fail;
 
     VkFramebufferCreateInfo framebuffer_info = {
         .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-        .renderPass = context->render_pass,
+        .renderPass = ctx->render_pass,
         .attachmentCount = 1,
-        .width = context->dimensions.width,
-        .height = context->dimensions.height,
+        .width = ctx->dimensions.width,
+        .height = ctx->dimensions.height,
         .layers = 1
     };
 
     chain->framebuffers = malloc(chain->image_count * sizeof(VkFramebuffer));
 
-    for (u32 idx = 0; idx < chain->image_count; idx++) {
-        VkImageView attachments[1] = { chain->views[idx] };
+    for (idx = 0; idx < chain->image_count; idx++) {
+        attachments[0] = chain->views[idx];
         framebuffer_info.pAttachments = attachments;
 
-        VkResult framebuffer_fail = vkCreateFramebuffer(
-            context->driver,
+        framebuffer_fail = vkCreateFramebuffer(
+            ctx->driver,
             &framebuffer_info,
             NULL,
             &chain->framebuffers[idx]
@@ -395,127 +411,122 @@ bool vulkan_framebuffers_create(RenderContext *context) {
     return true;
 }
 
+
+// NOTE: may want to use `VK_IMAGE_USAGE_TRANSFER_DST_BIT` for image usage
+// as it allows rendering to a seperate image first to perform
+// post-processing
+
+// NOTE: `oldSwapchain` can specify a backup swapchain for when the window
+// get's resized or if the chain becomes invalid
+
+// VK_SHARING_MODE_CONCURRENT: Images can be used across multiple queue
+// families without explicit ownership transfers
+//
+// VK_SHARING_MODE_EXCLUSIVE: An image is owned by one queue family at a
+// time and ownership must be explicitly transferred before using it in
+// another queue family. This option offers the best performance
+
 /// Try to create a swapchain with at least one format.
-bool vulkan_swapchain_create(RenderContext *context) {
-    SwapChainDescriptor* chain = &context->swapchain;
+bool vk_swapchain_create(RenderContext *ctx) {
+    SwapChainDescriptor* chain = &ctx->swapchain;
     VkSurfaceCapabilitiesKHR* capabilities = &chain->capabilities;
-
-    VkResult surface_capabilities_fail = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-        context->device,
-        context->surface,
-        capabilities
-    );
-
-    if (surface_capabilities_fail)
-        return false;
-
-    VkResult surface_formats_fail;
-    surface_formats_fail = vkGetPhysicalDeviceSurfaceFormatsKHR(
-        context->device,
-        context->surface,
-        &chain->format_count,
-        NULL
-    );
-
-    if (chain->format_count == 0 || surface_formats_fail)
-        return false;
-
-    chain->formats = malloc(chain->format_count * sizeof(VkSurfaceFormatKHR));
-    surface_formats_fail = vkGetPhysicalDeviceSurfaceFormatsKHR(
-        context->device,
-        context->surface,
-        &chain->format_count,
-        chain->formats
-    );
-
-    if (surface_formats_fail || chain->format_count == 0)
-        return false;
+    VkResult vk_fail;
 
     VkSurfaceFormatKHR fallback_surface_format = {
         .format = VK_FORMAT_UNDEFINED,
         .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
     };
 
-    if (!try_preferred_swapchain_format(context))
-        context->surface_format = fallback_surface_format;
-
-    if (!try_preferred_present_mode(context))
-        context->present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-
-    create_swapchain_present_extent(context);
-
-    // number of images to be held in the swapchain
-    chain->image_count = capabilities->minImageCount + 2;
-
-    // NOTE: may want to use `VK_IMAGE_USAGE_TRANSFER_DST_BIT` for image usage
-    // as it allows rendering to a seperate image first to perform
-    // post-processing
-
     VkSwapchainCreateInfoKHR create_info = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-        .surface = context->surface,
-        .minImageCount = chain->image_count,
-        .imageFormat = context->surface_format.format,
-        .imageExtent = context->dimensions,
+        .surface = ctx->surface,
         .imageArrayLayers = 1,
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .preTransform = capabilities->currentTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-        .presentMode = context->present_mode,
+        .presentMode = VK_PRESENT_MODE_MAILBOX_KHR,
         .clipped = VK_TRUE,
         .oldSwapchain = VK_NULL_HANDLE
     };
 
-    // NOTE: `oldSwapchain` can specify a backup swapchain for when the window
-    // get's resized or if the chain becomes invalid
+    vk_fail = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+        ctx->device,
+        ctx->surface,
+        capabilities
+    );
 
-    // VK_SHARING_MODE_CONCURRENT: Images can be used across multiple queue
-    // families without explicit ownership transfers
-    //
-    // VK_SHARING_MODE_EXCLUSIVE: An image is owned by one queue family at a
-    // time and ownership must be explicitly transferred before using it in
-    // another queue family. This option offers the best performance
+    if (vk_fail)
+        return false;
 
-    if (context->present_queue != context->queue) {
+    create_info.preTransform = capabilities->currentTransform;
+
+    // number of images to be held in the swapchain
+    chain->image_count = capabilities->minImageCount + 2;
+    create_info.minImageCount = chain->image_count;
+
+    vk_fail = vkGetPhysicalDeviceSurfaceFormatsKHR(
+        ctx->device,
+        ctx->surface,
+        &chain->format_count,
+        NULL
+    );
+
+    if (chain->format_count == 0 || vk_fail)
+        return false;
+
+    chain->formats = malloc(chain->format_count * sizeof(VkSurfaceFormatKHR));
+    vk_fail = vkGetPhysicalDeviceSurfaceFormatsKHR(
+        ctx->device,
+        ctx->surface,
+        &chain->format_count,
+        chain->formats
+    );
+
+    if (chain->format_count == 0 || vk_fail)
+        return false;
+
+    if (!try_preferred_swapchain_format(ctx))
+        ctx->surface_format = fallback_surface_format;
+
+    create_info.imageFormat = ctx->surface_format.format;
+
+    if (!try_preferred_present_mode(ctx, &create_info.presentMode))
+        create_info.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+
+    create_swapchain_present_extent(ctx);
+    create_info.imageExtent = ctx->dimensions;
+
+    if (ctx->present_queue != ctx->queue) {
         create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     } else {
         create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
         create_info.queueFamilyIndexCount = 2;
-        create_info.pQueueFamilyIndices = &context->queue_family_indices;
+        create_info.pQueueFamilyIndices = &ctx->queue_family_indices;
     }
 
-    VkResult swapchain_fail;
-    swapchain_fail = vkCreateSwapchainKHR(
-        context->driver,
-        &create_info,
-        NULL,
-        &chain->data
-    );
-
-    if (swapchain_fail)
+    if (vkCreateSwapchainKHR(ctx->driver, &create_info, NULL, &chain->data))
         return false;
 
-    swapchain_fail = vkGetSwapchainImagesKHR(
-        context->driver,
+    vk_fail = vkGetSwapchainImagesKHR(
+        ctx->driver,
         chain->data,
         &chain->format_count,
         NULL
     );
 
-    if (swapchain_fail) {
+    if (vk_fail) {
         error("failed to read count of swapchain images");
         return false;
     }
 
     chain->images = malloc(chain->image_count * sizeof(VkImage));
-    swapchain_fail = vkGetSwapchainImagesKHR(
-        context->driver,
+    vk_fail = vkGetSwapchainImagesKHR(
+        ctx->driver,
         chain->data,
         &chain->format_count,
         chain->images
     );
 
-    if (swapchain_fail) {
+    if (vk_fail) {
         error("failed to get swapchain images");
         return false;
     }
@@ -523,16 +534,17 @@ bool vulkan_swapchain_create(RenderContext *context) {
     return true;
 }
 
-void vulkan_swapchain_destroy(RenderContext *context) {
-    SwapChainDescriptor* chain = &context->swapchain;
+void vk_swapchain_destroy(RenderContext *ctx) {
+    u32 idx;
+    SwapChainDescriptor* chain = &ctx->swapchain;
 
-    for (u32 idx = 0; idx < chain->image_count; idx++)
-        vkDestroyFramebuffer(context->driver, chain->framebuffers[idx], NULL);
+    for (idx = 0; idx < chain->image_count; idx++)
+        vkDestroyFramebuffer(ctx->driver, chain->framebuffers[idx], NULL);
 
-    for (u32 idx = 0; idx < chain->image_count; idx++)
-        vkDestroyImageView(context->driver, chain->views[idx], NULL);
+    for (idx = 0; idx < chain->image_count; idx++)
+        vkDestroyImageView(ctx->driver, chain->views[idx], NULL);
 
-    vkDestroySwapchainKHR(context->driver, chain->data, NULL);
+    vkDestroySwapchainKHR(ctx->driver, chain->data, NULL);
 
     free(chain->framebuffers);
     free(chain->images);
@@ -540,82 +552,79 @@ void vulkan_swapchain_destroy(RenderContext *context) {
     free(chain->views);
 }
 
-bool vulkan_swapchain_recreate(RenderContext *context) {
-    vkDeviceWaitIdle(context->driver);
+bool vk_swapchain_recreate(RenderContext *ctx) {
+    vkDeviceWaitIdle(ctx->driver);
 
-    vulkan_swapchain_destroy(context);
+    vk_swapchain_destroy(ctx);
 
-    if (!vulkan_swapchain_create(context))
+    if (!vk_swapchain_create(ctx))
         return false;
 
-    if (!vulkan_image_views_create(context))
+    if (!vk_image_views_create(ctx))
         return false;
 
-    if (!vulkan_framebuffers_create(context))
+    if (!vk_framebuffers_create(ctx))
         return false;
 
     return true;
 }
 
+// NOTE: can create multiple logical devices with different requirements
+// for the same physical device
+
+// NOTE: for now the present_queue and queue will be the same
+
 /// Try to create a device, associated queue, present queue and surface.
-bool vulkan_device_create(RenderContext *context) {
-    // find a simple queue that can handle at least graphics for now
-    if (!find_queue_families(context)) {
-        warn("couldn't find any queue families");
-        return false;
-    }
-
-    // NOTE: can create multiple logical devices with different requirements
-    // for the same physical device
-
-    // a priority for scheduling command buffers between 0.0 and 1.0
+bool vk_device_create(RenderContext *ctx) {
     f32 queue_priority = 1.0;
+    const char* device_extensions[1] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    VkBool32 surface_supported = false;
+    VkResult vk_fail;
 
-    VkDeviceQueueCreateInfo queue_create_info = {
-        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = context->queue_family_indices,
-        .queueCount = 1,
-        .pQueuePriorities = &queue_priority,
-    };
-
-    const char* device_extensions[1] = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    };
-
-    // enable no device feature
     VkPhysicalDeviceFeatures device_features = {};
-
     VkDeviceCreateInfo device_create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pQueueCreateInfos = &queue_create_info,
         .queueCreateInfoCount = 1,
         .pEnabledFeatures = &device_features,
         .enabledExtensionCount = 1,
         .ppEnabledExtensionNames = device_extensions,
     };
 
-    if (vkCreateDevice(context->device, &device_create_info, NULL, &context->driver)) {
+    VkDeviceQueueCreateInfo queue_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueCount = 1,
+        .pQueuePriorities = &queue_priority,
+    };
+
+    // find a simple queue that can handle at least graphics for now
+    if (!find_queue_families(ctx)) {
+        warn("couldn't find any queue families");
+        return false;
+    }
+
+    queue_create_info.queueFamilyIndex = ctx->queue_family_indices;
+    device_create_info.pQueueCreateInfos = &queue_create_info;
+
+    if (vkCreateDevice(ctx->device, &device_create_info, NULL, &ctx->driver)) {
         warn("failed to create driver");
         return false;
     }
 
-    vkGetDeviceQueue(context->driver, context->queue_family_indices, 0, &context->queue);
+    vkGetDeviceQueue(ctx->driver, ctx->queue_family_indices, 0, &ctx->queue);
 
-    if (!SDL_Vulkan_CreateSurface(context->window, context->instance, &context->surface)) {
+    if (!SDL_Vulkan_CreateSurface(ctx->window, ctx->instance, &ctx->surface)) {
         warn("failed to create surface");
         return false;
     }
 
-    // NOTE: for now the present_queue and queue will be the same
-    VkBool32 surface_supported = false;
-    VkResult surface_support_fail = vkGetPhysicalDeviceSurfaceSupportKHR(
-        context->device,
-        context->queue_family_indices,
-        context->surface,
+    vk_fail = vkGetPhysicalDeviceSurfaceSupportKHR(
+        ctx->device,
+        ctx->queue_family_indices,
+        ctx->surface,
         &surface_supported
     );
 
-    if (!surface_supported || surface_support_fail) {
+    if (!surface_supported || vk_fail) {
         warn("selected queue doesn't support required surface");
         return false;
     }
@@ -625,35 +634,39 @@ bool vulkan_device_create(RenderContext *context) {
 
 /// Try to setup a device that supports the required
 /// features, extensions and swapchain.
-bool vulkan_most_suitable_device_create(RenderContext *context) {
-    u32 device_count;
-    vkEnumeratePhysicalDevices(context->instance, &device_count, NULL);
+bool vk_most_suitable_device_create(RenderContext *ctx) {
+    u32 device_count, idx;
+    VkPhysicalDevice* devices;
+    VkPhysicalDeviceType preferred_device;
+    VkPhysicalDeviceProperties properties;
 
-    if (device_count == 0) return false;
+    vkEnumeratePhysicalDevices(ctx->instance, &device_count, NULL);
 
-    VkPhysicalDevice* devices = malloc(device_count * sizeof(VkPhysicalDevice));
-    vkEnumeratePhysicalDevices(context->instance, &device_count, devices);
+    if (device_count == 0)
+        return false;
 
-    VkPhysicalDeviceType preferred_device = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    devices = malloc(device_count * sizeof(VkPhysicalDevice));
+    vkEnumeratePhysicalDevices(ctx->instance, &device_count, devices);
+
+    preferred_device = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
     // try to find a discrete GPU
-    VkPhysicalDeviceProperties properties;
-    for (u32 idx = 0; idx < device_count; idx++) {
-        context->device = devices[idx];
+    for (idx = 0; idx < device_count; idx++) {
+        ctx->device = devices[idx];
 
-        vkGetPhysicalDeviceProperties(context->device, &properties);
+        vkGetPhysicalDeviceProperties(ctx->device, &properties);
         if (properties.deviceType != preferred_device)
             continue;
 
         trace("GPU: %s", properties.deviceName);
 
-        if (!matches_device_requirements(context->device))
+        if (!matches_device_requirements(ctx->device))
             continue;
 
-        if (!vulkan_device_create(context))
+        if (!vk_device_create(ctx))
             continue;
 
-        if (!vulkan_swapchain_create(context))
+        if (!vk_swapchain_create(ctx))
             continue;
 
         free(devices);
@@ -661,22 +674,22 @@ bool vulkan_most_suitable_device_create(RenderContext *context) {
     }
 
     // try to find any GPU
-    for (u32 idx = 0; idx < device_count; idx++) {
-        context->device = devices[idx];
+    for (idx = 0; idx < device_count; idx++) {
+        ctx->device = devices[idx];
 
-        vkGetPhysicalDeviceProperties(context->device, &properties);
+        vkGetPhysicalDeviceProperties(ctx->device, &properties);
         if (properties.deviceType == preferred_device)
             continue;
 
         trace("GPU: %s", properties.deviceName);
 
-        if (!matches_device_requirements(context->device))
+        if (!matches_device_requirements(ctx->device))
             continue;
 
-        if (!vulkan_device_create(context))
+        if (!vk_device_create(ctx))
             continue;
 
-        if (!vulkan_swapchain_create(context))
+        if (!vk_swapchain_create(ctx))
             continue;
 
         free(devices);
@@ -687,9 +700,10 @@ bool vulkan_most_suitable_device_create(RenderContext *context) {
     return false;
 }
 
-bool vulkan_instance_create(RenderContext *context) {
-    u32 ext_count = 0;
-    const char** extensions = get_required_extensions(context->window, &ext_count);
+bool vk_instance_create(RenderContext *ctx) {
+    u32 ext_count, opt_count;
+    const char** extensions = get_required_extensions(ctx->window, &ext_count);
+    VkResult vk_fail;
 
     VkApplicationInfo app_info = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -720,12 +734,12 @@ bool vulkan_instance_create(RenderContext *context) {
                        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
 
-        .pfnUserCallback = vulkan_debug_handler,
+        .pfnUserCallback = vk_debug_handler,
     };
 
     if (get_log_level() == LOG_TRACE) {
-        ValidationLayers* valid = &context->validation;
-        vulkan_valididation_create(valid);
+        ValidationLayers* valid = &ctx->validation;
+        vk_valididation_create(valid);
 
         // enable all supported layers when for debugging
         instance_create_info.enabledLayerCount = valid->layer_count;
@@ -735,32 +749,30 @@ bool vulkan_instance_create(RenderContext *context) {
         instance_create_info.pNext = &debug_create_info;
     }
 
-    u32 opt_count;
-    bool x = true;
-    x = vkCreateInstance(&instance_create_info, NULL, &context->instance) == 0;
+    vk_fail = vkCreateInstance(&instance_create_info, NULL, &ctx->instance);
 
     free(get_optional_extensions(&opt_count));
     free(extensions);
 
-    return x;
+    return vk_fail == VK_SUCCESS;
 }
 
-VkResult vulkan_shader_module_create(RenderContext *context,
-                                     char* binary,
-                                     u32 binary_size,
-                                     VkShaderModule *module) {
+VkResult vk_shader_module_create(RenderContext *ctx,
+                                 char* binary,
+                                 u32 binary_size,
+                                 VkShaderModule *module) {
     VkShaderModuleCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = binary_size,
         .pCode = (u32*)binary
     };
 
-    return vkCreateShaderModule(context->driver, &create_info, NULL, module);
+    return vkCreateShaderModule(ctx->driver, &create_info, NULL, module);
 }
 
-bool vulkan_render_pass_create(RenderContext *context) {
+bool vk_render_pass_create(RenderContext *ctx) {
     VkAttachmentDescription color_attachment = {
-        .format = context->surface_format.format,
+        .format = ctx->surface_format.format,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -803,75 +815,54 @@ bool vulkan_render_pass_create(RenderContext *context) {
     };
 
     return vkCreateRenderPass(
-        context->driver,
+        ctx->driver,
         &render_pass_info,
         NULL,
-        &context->render_pass
+        &ctx->render_pass
     ) == VK_SUCCESS;
 }
 
-bool vulkan_pipeline_create(RenderContext *context) {
-    u32 vert_size, frag_size;
+// VK_PRIMITIVE_TOPOLOGY_POINT_LIST: points from vertices
+//
+// VK_PRIMITIVE_TOPOLOGY_LINE_LIST: line from every 2 vertices without
+//
+// reuse VK_PRIMITIVE_TOPOLOGY_LINE_STRIP: the end vertex of every line is
+// used as start vertex for the next line
+//
+// VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST: triangle from every 3 vertices
+//
+// without reuse VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP: the second and third
+// vertex of every triangle are used as first two vertices of the next
+// triangle
 
+// Normally, the vertices are loaded from the vertex buffer by index in
+// sequential order, but with an element buffer you can specify the indices
+// to use yourself. This allows you to perform optimizations like reusing
+// vertices. If you set the primitiveRestartEnable member to VK_TRUE, then
+// it's possible to break up lines and triangles in the _STRIP topology
+// modes by using a special index of 0xFFFF or 0xFFFFFFFF.
+
+bool vk_pipeline_create(RenderContext *ctx) {
+    u32 vert_size, frag_size;
     char* vert_bin = read_binary("./target/shaders/shader.vert.spv", &vert_size);
     char* frag_bin = read_binary("./target/shaders/shader.frag.spv", &frag_size);
+    VkResult vk_fail = VK_SUCCESS;
 
-    if (vert_bin == NULL || frag_bin == NULL) {
-        error("failed to read shader source");
-        return false;
-    }
-
-    VkResult r1 = vulkan_shader_module_create(
-        context,
-        frag_bin,
-        frag_size,
-        &context->frag
-    );
-
-    VkResult r2 = vulkan_shader_module_create(
-        context,
-        vert_bin,
-        vert_size,
-        &context->vert
-    );
-
-    free(vert_bin);
-    free(frag_bin);
-
-    if (r1 || r2) {
-        error("failed to create shader module");
-        return false;
-    }
-
-    VkPipelineShaderStageCreateInfo vert_shader_create_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-        .module = context->frag,
-        .pName = "main"
-    };
-
-    VkPipelineShaderStageCreateInfo frag_shader_create_info = {
+    VkPipelineShaderStageCreateInfo vert_shader_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_VERTEX_BIT,
-        .module = context->vert,
         .pName = "main"
     };
 
-    VkPipelineShaderStageCreateInfo shader_stages[2] = {
-        vert_shader_create_info,
-        frag_shader_create_info
+    VkPipelineShaderStageCreateInfo frag_shader_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .pName = "main"
     };
 
-    context->dynamic_states = malloc(2 * sizeof(VkDynamicState));
-    context->dynamic_state_count = 2;
-
-    context->dynamic_states[0] = VK_DYNAMIC_STATE_VIEWPORT;
-    context->dynamic_states[1] = VK_DYNAMIC_STATE_SCISSOR;
-
+    VkPipelineShaderStageCreateInfo shader_stages[2];
     VkPipelineDynamicStateCreateInfo dynamic_create_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .pDynamicStates = context->dynamic_states,
-        .dynamicStateCount = context->dynamic_state_count
     };
 
     // TODO: `pVertexBindingDescriptions` and `pVertexAttributeDescriptions`
@@ -883,53 +874,19 @@ bool vulkan_pipeline_create(RenderContext *context) {
         .pVertexAttributeDescriptions = NULL
     };
 
-    // VK_PRIMITIVE_TOPOLOGY_POINT_LIST: points from vertices
-    //
-    // VK_PRIMITIVE_TOPOLOGY_LINE_LIST: line from every 2 vertices without
-    //
-    // reuse VK_PRIMITIVE_TOPOLOGY_LINE_STRIP: the end vertex of every line is
-    // used as start vertex for the next line
-    //
-    // VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST: triangle from every 3 vertices
-    //
-    // without reuse VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP: the second and third
-    // vertex of every triangle are used as first two vertices of the next
-    // triangle
-
-    // Normally, the vertices are loaded from the vertex buffer by index in
-    // sequential order, but with an element buffer you can specify the indices
-    // to use yourself. This allows you to perform optimizations like reusing
-    // vertices. If you set the primitiveRestartEnable member to VK_TRUE, then
-    // it's possible to break up lines and triangles in the _STRIP topology
-    // modes by using a special index of 0xFFFF or 0xFFFFFFFF.
-
     VkPipelineInputAssemblyStateCreateInfo input_assembly_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
         .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
         .primitiveRestartEnable = VK_FALSE,
     };
 
-    context->viewport.x = 0.0;
-    context->viewport.y = 0.0;
-    context->viewport.width = (float)context->dimensions.width;
-    context->viewport.height = (float)context->dimensions.height;
-    context->viewport.minDepth = 0.0;
-    context->viewport.maxDepth = 1.0;
-
-    context->scissor.offset.x = 0;
-    context->scissor.offset.y = 0;
-    context->scissor.extent = context->dimensions;
-
     VkPipelineViewportStateCreateInfo viewport_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-        .pViewports = &context->viewport,
         .viewportCount = 1,
-        .pScissors = &context->scissor,
-        .scissorCount = 1
+        .scissorCount = 1,
     };
 
     // `polygonMode` can be used with `VK_POLYGON_MODE_LINE` for wireframe
-    //
     // !!! does require specific GPU features
     VkPipelineRasterizationStateCreateInfo rasterizer_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
@@ -971,14 +928,9 @@ bool vulkan_pipeline_create(RenderContext *context) {
         .pPushConstantRanges = NULL
     };
 
-    if (vkCreatePipelineLayout(context->driver, &pipeline_layout_info, NULL, &context->pipeline_layout)) {
-        return false;
-    }
-
     VkGraphicsPipelineCreateInfo pipeline_info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-        .layout = context->pipeline_layout,
-        .renderPass = context->render_pass,
+        .renderPass = ctx->render_pass,
         .subpass = 0, // index into the render pass for what subpass to use
         .basePipelineHandle = NULL, // other potential pipeline to use for faster creation
         .basePipelineIndex = -1,    // of pipelines that share functionality
@@ -994,57 +946,116 @@ bool vulkan_pipeline_create(RenderContext *context) {
         .pDepthStencilState = NULL,
     };
 
+    if (vert_bin == NULL || frag_bin == NULL) {
+        error("failed to read shader source");
+        return false;
+    }
+
+    vk_fail |= vk_shader_module_create(ctx, frag_bin, frag_size, &ctx->frag);
+    vk_fail |= vk_shader_module_create(ctx, vert_bin, vert_size, &ctx->vert);
+
+    free(vert_bin);
+    free(frag_bin);
+
+    if (vk_fail) {
+        error("failed to create shader module");
+        return false;
+    }
+
+    vert_shader_info.module = ctx->vert;
+    frag_shader_info.module = ctx->frag;
+
+    shader_stages[0] = vert_shader_info;
+    shader_stages[1] = frag_shader_info;
+
+    ctx->dynamic_states = malloc(2 * sizeof(VkDynamicState));
+    ctx->dynamic_state_count = 2;
+    dynamic_create_info.dynamicStateCount = ctx->dynamic_state_count;
+
+    ctx->dynamic_states[0] = VK_DYNAMIC_STATE_VIEWPORT;
+    ctx->dynamic_states[1] = VK_DYNAMIC_STATE_SCISSOR;
+    dynamic_create_info.pDynamicStates = ctx->dynamic_states;
+
+    ctx->viewport.x = 0.0;
+    ctx->viewport.y = 0.0;
+    ctx->viewport.width = (float)ctx->dimensions.width;
+    ctx->viewport.height = (float)ctx->dimensions.height;
+    ctx->viewport.minDepth = 0.0;
+    ctx->viewport.maxDepth = 1.0;
+    viewport_info.pViewports = &ctx->viewport;
+
+    ctx->scissor.offset.x = 0;
+    ctx->scissor.offset.y = 0;
+    ctx->scissor.extent = ctx->dimensions;
+    viewport_info.pScissors = &ctx->scissor;
+
+    vk_fail = vkCreatePipelineLayout(
+        ctx->driver,
+        &pipeline_layout_info,
+        NULL,
+        &ctx->pipeline_layout
+    );
+
+    if (vk_fail)
+        return false;
+
+    pipeline_info.layout = ctx->pipeline_layout;
+
     // NOTE: `vkCreateGraphicsPipelines` takes a list of pipelines to create at once
     return vkCreateGraphicsPipelines(
-        context->driver,
+        ctx->driver,
         VK_NULL_HANDLE,
         1,
         &pipeline_info,
         NULL,
-        &context->pipeline
+        &ctx->pipeline
     ) == VK_SUCCESS;
 }
 
-void vulkan_pipeline_destroy(RenderContext *context) {
-    vkDestroyPipeline(context->driver, context->pipeline, NULL);
-    vkDestroyPipelineLayout(context->driver, context->pipeline_layout, NULL);
-    vkDestroyShaderModule(context->driver, context->vert, NULL);
-    vkDestroyShaderModule(context->driver, context->frag, NULL);
+void vk_pipeline_destroy(RenderContext *ctx) {
+    vkDestroyPipeline(ctx->driver, ctx->pipeline, NULL);
+    vkDestroyPipelineLayout(ctx->driver, ctx->pipeline_layout, NULL);
+    vkDestroyShaderModule(ctx->driver, ctx->vert, NULL);
+    vkDestroyShaderModule(ctx->driver, ctx->frag, NULL);
 
-    free(context->dynamic_states);
+    free(ctx->dynamic_states);
 }
 
-bool vulkan_cmd_pool_create(RenderContext *context) {
+bool vk_cmd_pool_create(RenderContext *ctx) {
     VkCommandPoolCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = context->queue_family_indices
+        .queueFamilyIndex = ctx->queue_family_indices
     };
 
     return vkCreateCommandPool(
-        context->driver,
+        ctx->driver,
         &create_info,
         NULL,
-        &context->cmd_pool
+        &ctx->cmd_pool
     ) == VK_SUCCESS;
 }
 
-bool vulkan_cmd_buffer_alloc(RenderContext *context) {
+bool vk_cmd_buffer_alloc(RenderContext *ctx) {
     VkCommandBufferAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = context->cmd_pool,
+        .commandPool = ctx->cmd_pool,
         .commandBufferCount = MAX_FRAMES_LOADED,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
     };
 
     return vkAllocateCommandBuffers(
-        context->driver,
+        ctx->driver,
         &alloc_info,
-        context->cmd_buffers
+        ctx->cmd_buffers
     ) == VK_SUCCESS;
 }
 
-bool vulkan_sync_primitives_create(RenderContext *context) {
+bool vk_sync_primitives_create(RenderContext *ctx) {
+    u32 idx;
+    VkResult vk_fail = VK_SUCCESS;
+    Synchronization *sync;
+
     VkSemaphoreCreateInfo semaphore_info = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
     };
@@ -1054,67 +1065,74 @@ bool vulkan_sync_primitives_create(RenderContext *context) {
         .flags = VK_FENCE_CREATE_SIGNALED_BIT
     };
 
-    for (u32 idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
-        VkResult r1 = vkCreateSemaphore(
-            context->driver,
+    for (idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
+        sync = &ctx->sync[idx];
+
+        vk_fail |= vkCreateSemaphore(
+            ctx->driver,
             &semaphore_info,
             NULL,
-            &context->images_available[idx]
+            &sync->images_available
         );
 
-        VkResult r2 = vkCreateSemaphore(
-            context->driver,
+        vk_fail |= vkCreateSemaphore(
+            ctx->driver,
             &semaphore_info,
             NULL,
-            &context->renders_finished[idx]
+            &sync->renders_finished
         );
 
-        VkResult r3 = vkCreateFence(
-            context->driver,
+        vk_fail |= vkCreateFence(
+            ctx->driver,
             &fence_info,
             NULL,
-            &context->renderers_busy[idx]
+            &sync->renderers_busy
         );
 
-        if ((r1 & r2 & r3) != VK_SUCCESS)
+        if (vk_fail)
             return false;
     }
 
     return true;
 }
 
-void vulkan_sync_primitives_destroy(RenderContext *context) {
-    for (u32 idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
-        vkDestroySemaphore(context->driver, context->images_available[idx], NULL);
-        vkDestroySemaphore(context->driver, context->renders_finished[idx], NULL);
-        vkDestroyFence(context->driver, context->renderers_busy[idx], NULL);
+void vk_sync_primitives_destroy(RenderContext *ctx) {
+    u32 idx = 0;
+    Synchronization *sync;
+
+    for (idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
+        sync = &ctx->sync[idx];
+
+        vkDestroySemaphore(ctx->driver, sync->images_available, NULL);
+        vkDestroySemaphore(ctx->driver, sync->renders_finished, NULL);
+        vkDestroyFence(ctx->driver, sync->renderers_busy, NULL);
     }
 }
 
-bool vulkan_record_cmd_buffer(RenderContext *context, u32 image_idx) {
-    VkCommandBuffer frame_cmd_buffer = context->cmd_buffers[context->frame];
+bool vk_record_cmd_buffer(RenderContext *ctx, u32 image_idx) {
+    VkCommandBuffer frame_cmd_buffer = ctx->cmd_buffers[ctx->frame];
 
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    };
+
+    // black with 100% opacity
+    VkClearValue clear_color = {{{0.0, 0.0, 0.0, 0.0}}};
+
+    VkRenderPassBeginInfo render_pass_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = ctx->render_pass,
+        .framebuffer = ctx->swapchain.framebuffers[image_idx],
+        .renderArea.offset = {0, 0},
+        .renderArea.extent = ctx->dimensions,
+        .pClearValues = &clear_color,
+        .clearValueCount = 1,
     };
 
     if (vkBeginCommandBuffer(frame_cmd_buffer, &begin_info))
         return false;
 
     /* ------------------------ render pass ------------------------ */
-
-    // clear the screen with black 100% opacity
-    VkClearValue clear_color = {{{0.0, 0.0, 0.0, 0.0}}};
-
-    VkRenderPassBeginInfo render_pass_info = {
-        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = context->render_pass,
-        .framebuffer = context->swapchain.framebuffers[image_idx],
-        .renderArea.offset = {0, 0},
-        .renderArea.extent = context->dimensions,
-        .pClearValues = &clear_color,
-        .clearValueCount = 1,
-    };
 
     vkCmdBeginRenderPass(
         frame_cmd_buffer,
@@ -1125,12 +1143,12 @@ bool vulkan_record_cmd_buffer(RenderContext *context, u32 image_idx) {
     vkCmdBindPipeline(
         frame_cmd_buffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
-        context->pipeline
+        ctx->pipeline
     );
 
     // setting necessary dynamic state
-    vkCmdSetViewport(frame_cmd_buffer, 0, 1, &context->viewport);
-    vkCmdSetScissor(frame_cmd_buffer, 0, 1, &context->scissor);
+    vkCmdSetViewport(frame_cmd_buffer, 0, 1, &ctx->viewport);
+    vkCmdSetScissor(frame_cmd_buffer, 0, 1, &ctx->scissor);
 
     vkCmdDraw(frame_cmd_buffer, 3, 1, 0, 0);
 
@@ -1141,58 +1159,58 @@ bool vulkan_record_cmd_buffer(RenderContext *context, u32 image_idx) {
     return vkEndCommandBuffer(frame_cmd_buffer) == VK_SUCCESS;
 }
 
-void vulkan_engine_create(RenderContext *context) {
-    if (!vulkan_instance_create(context))
+void vk_engine_create(RenderContext *ctx) {
+    if (!vk_instance_create(ctx))
         panic("failed to create instance");
 
-    if (!vulkan_debugger_create(context))
+    if (!vk_debugger_create(ctx))
         panic("failed to attach debugger");
 
-    if (!vulkan_most_suitable_device_create(context))
+    if (!vk_most_suitable_device_create(ctx))
         panic("failed to setup any GPU");
 
-    if (!vulkan_image_views_create(context))
+    if (!vk_image_views_create(ctx))
         panic("failed to create image views");
 
-    if (!vulkan_render_pass_create(context))
+    if (!vk_render_pass_create(ctx))
         panic("failed to create render pass");
 
-    if (!vulkan_pipeline_create(context))
+    if (!vk_pipeline_create(ctx))
         panic("failed to create a pipeline");
 
-    if (!vulkan_framebuffers_create(context))
+    if (!vk_framebuffers_create(ctx))
         panic("failed to create framebuffer");
 
-    if (!vulkan_cmd_pool_create(context))
+    if (!vk_cmd_pool_create(ctx))
         panic("failed to create command pool");
 
-    if (!vulkan_cmd_buffer_alloc(context))
+    if (!vk_cmd_buffer_alloc(ctx))
         panic("failed to create command buffer");
 
-    if (!vulkan_sync_primitives_create(context))
+    if (!vk_sync_primitives_create(ctx))
         panic("failed to create synchronization primitives");
 
-    context->frame = 0;
+    ctx->frame = 0;
 
     info("vulkan engine created");
 }
 
 // FIXME: layers appear to be unloading twice
-void vulkan_engine_destroy(RenderContext *context) {
-    vkDeviceWaitIdle(context->driver);
+void vk_engine_destroy(RenderContext *ctx) {
+    vkDeviceWaitIdle(ctx->driver);
 
-    vulkan_sync_primitives_destroy(context);
-    vkDestroyCommandPool(context->driver, context->cmd_pool, NULL);
-    vulkan_pipeline_destroy(context);
-    vkDestroyRenderPass(context->driver, context->render_pass, NULL);
-    vulkan_swapchain_destroy(context);
-    vkDestroyDevice(context->driver, NULL);
-    vulkan_debugger_destroy(context);
-    vkDestroySurfaceKHR(context->instance, context->surface, NULL);
-    vkDestroyInstance(context->instance, NULL);
+    vk_sync_primitives_destroy(ctx);
+    vkDestroyCommandPool(ctx->driver, ctx->cmd_pool, NULL);
+    vk_pipeline_destroy(ctx);
+    vkDestroyRenderPass(ctx->driver, ctx->render_pass, NULL);
+    vk_swapchain_destroy(ctx);
+    vkDestroyDevice(ctx->driver, NULL);
+    vk_debugger_destroy(ctx);
+    vkDestroySurfaceKHR(ctx->instance, ctx->surface, NULL);
+    vkDestroyInstance(ctx->instance, NULL);
 
     if (get_log_level() == LOG_TRACE) {
-        vulkan_valididation_destroy(&context->validation);
+        vk_valididation_destroy(&ctx->validation);
     }
 
     info("vulkan engine destroyed");
@@ -1204,57 +1222,15 @@ void vulkan_engine_destroy(RenderContext *context) {
 // 4. Submit the recorded command buffer
 // 5. Present the swap chain image
 
-void vulkan_engine_render(RenderContext* context) {
-    vkWaitForFences(
-        context->driver,
-        1,
-        &context->renderers_busy[context->frame],
-        VK_TRUE,
-        UINT64_MAX
-    );
-
+void vk_engine_render(RenderContext* ctx) {
     u32 image_idx;
-    VkResult acquire_fail = vkAcquireNextImageKHR(
-        context->driver,
-        context->swapchain.data,
-        UINT64_MAX,
-        context->images_available[context->frame],
-        VK_NULL_HANDLE,
-        &image_idx
-    );
-
-    if (acquire_fail == VK_ERROR_OUT_OF_DATE_KHR ||
-        acquire_fail == VK_SUBOPTIMAL_KHR) {
-        if (!vulkan_swapchain_recreate(context)) {
-            warn("failed to recreate swapchain");
-        }
-
-        return;
-    } else if (acquire_fail) {
-        warn("failed to acquire next image in swapchain");
-        goto next;
-    }
-
-    vkResetFences(
-        context->driver,
-        1,
-        &context->renderers_busy[context->frame]
-    );
-
-    vkResetCommandBuffer(context->cmd_buffers[context->frame], 0);
-    vulkan_record_cmd_buffer(context, image_idx);
-
-    VkSemaphore wait_semaphores[1] = {
-        context->images_available[context->frame]
-    };
+    VkResult vk_fail;
+    Synchronization *sync = &ctx->sync[ctx->frame];
+    VkSemaphore wait_semaphores[1] = { sync->images_available };
+    VkSemaphore signal_semaphores[1] = { sync->renders_finished };
 
     VkPipelineStageFlags wait_stages[1] = {
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-    };
-
-    // NOTE: each entry in `wait_stages` corresponds to a semaphore in `wait_semaphores`
-    VkSemaphore signal_semaphores[1] = { 
-        context->renders_finished[context->frame]
     };
 
     VkSubmitInfo submit_info = {
@@ -1262,25 +1238,13 @@ void vulkan_engine_render(RenderContext* context) {
         .pWaitSemaphores = wait_semaphores,
         .waitSemaphoreCount = 1,
         .pWaitDstStageMask = wait_stages,
-        .pCommandBuffers = &context->cmd_buffers[context->frame],
+        .pCommandBuffers = &ctx->cmd_buffers[ctx->frame],
         .commandBufferCount = 1,
         .pSignalSemaphores = signal_semaphores,
         .signalSemaphoreCount = 1
     };
 
-    VkResult submit_fail = vkQueueSubmit(
-        context->queue,
-        1,
-        &submit_info,
-        context->renderers_busy[context->frame]
-    );
-
-    if (submit_fail) {
-        warn("failed to submit queue tasks");
-        goto next;
-    }
-
-    VkSwapchainKHR swapchains[1] = { context->swapchain.data };
+    VkSwapchainKHR swapchains[1] = { ctx->swapchain.data };
 
     VkPresentInfoKHR present_info = {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -1291,11 +1255,49 @@ void vulkan_engine_render(RenderContext* context) {
         .pImageIndices = &image_idx
     };
 
-    if (vkQueuePresentKHR(context->queue, &present_info)) {
-        warn("failed to present queue");
-        goto next;
+    vkWaitForFences(
+        ctx->driver,
+        1,
+        &sync->renderers_busy,
+        VK_TRUE,
+        UINT64_MAX
+    );
+
+    vk_fail = vkAcquireNextImageKHR(
+        ctx->driver,
+        ctx->swapchain.data,
+        UINT64_MAX,
+        sync->images_available,
+        VK_NULL_HANDLE,
+        &image_idx
+    );
+
+    if (vk_fail == VK_SUBOPTIMAL_KHR || vk_fail == VK_ERROR_OUT_OF_DATE_KHR) {
+        if (!vk_swapchain_recreate(ctx))
+            warn("failed to recreate swapchain");
+        return;
     }
 
-next:
-    context->frame = (context->frame + 1) % MAX_FRAMES_LOADED;
+    if (vk_fail) {
+        warn("failed to acquire next image in swapchain");
+        ctx->frame = (ctx->frame + 1) % MAX_FRAMES_LOADED;
+        return;
+    }
+
+    vkResetFences(ctx->driver, 1, &sync->renderers_busy);
+    vkResetCommandBuffer(ctx->cmd_buffers[ctx->frame], 0);
+
+    vk_record_cmd_buffer(ctx, image_idx);
+
+    if (vkQueueSubmit(ctx->queue, 1, &submit_info, sync->renderers_busy)) {
+        warn("failed to submit queue tasks");
+        ctx->frame = (ctx->frame + 1) % MAX_FRAMES_LOADED;
+        return;
+    }
+
+    if (vkQueuePresentKHR(ctx->queue, &present_info)) {
+        warn("failed to present queue");
+        ctx->frame = (ctx->frame + 1) % MAX_FRAMES_LOADED;
+        return;
+    }
 }

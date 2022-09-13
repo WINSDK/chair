@@ -17,7 +17,7 @@ void event_loop(RenderContext *context) {
         if (board[SDL_SCANCODE_C] && board[SDL_SCANCODE_LCTRL])
             break;
 
-        vulkan_engine_render(context);
+        vk_engine_render(context);
     }
 }
 
@@ -34,19 +34,19 @@ int main(int argc, const char *argv[]) {
         }
     }
 
-    RenderContext context;
-
+    RenderContext ctx;
     struct timespec t = now();
-    sdl_renderer_create(&context);
-    vulkan_engine_create(&context);
+
+    sdl_renderer_create(&ctx);
+    vk_engine_create(&ctx);
 
     t = time_elapsed(t);
     info("%lld.%.9ld seconds elapsed to initialize vulkan",
          (long long)t.tv_sec, t.tv_nsec);
 
-    event_loop(&context);
-    vulkan_engine_destroy(&context);
-    sdl_renderer_destroy(&context);
+    event_loop(&ctx);
+    vk_engine_destroy(&ctx);
+    sdl_renderer_destroy(&ctx);
     
     return 0;
 }

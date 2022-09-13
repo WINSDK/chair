@@ -147,6 +147,7 @@ char* read_binary(const char *path, u32 *bytes_read) {
     *bytes_read = fread(bytes, 1, size, file);
 
     if (bytes == NULL) return NULL;
+
     if (fclose(file) != 0 || *bytes_read != size) {
         free(bytes);
         return NULL;
