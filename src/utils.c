@@ -1,4 +1,5 @@
-#include <bits/types/clockid_t.h>
+#include <unistd.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdnoreturn.h>
@@ -31,7 +32,7 @@ void trace(const char *format, ...) {
 
 
 void trace_array(const char** msgs, u32 len, const char *format, ...) {
-    if (get_log_level() < LOG_TRACE) return;
+    if (get_log_level() < LOG_TRACE || len == 0) return;
 
     va_list ap;
     va_start(ap, format);
@@ -99,8 +100,6 @@ noreturn void panic(const char *format, ...) {
 #define CLOCK_REALTIME			 0
 #define CLOCK_PROCESS_CPUTIME_ID 2
 #define CLOCK_THREAD_CPUTIME_ID	 3
-
-extern int clock_gettime(clockid_t __clock_id, struct timespec *__tp) __THROW;
 
 struct timespec now() {
     struct timespec time;

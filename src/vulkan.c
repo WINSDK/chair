@@ -6,9 +6,17 @@
 const char** get_required_extensions(SDL_Window *window, u32 *count) {
     const char **extensions;
 
-    SDL_Vulkan_GetInstanceExtensions(window, count, NULL);
+    if (!SDL_Vulkan_GetInstanceExtensions(window, count, NULL)) {
+        error("failed to retrieve all required extensions: '%s'", SDL_GetError());
+        return NULL;
+    }
+
     extensions = malloc((*count + 2) * sizeof(char*));
-    SDL_Vulkan_GetInstanceExtensions(window, count, extensions);
+
+    if (!SDL_Vulkan_GetInstanceExtensions(window, count, extensions)) {
+        error("failed to retrieve all required extensions: '%s'", SDL_GetError());
+        return NULL;
+    }
 
     // MacOS requires the `VK_KHR_PORTABILITY_subset` extension
 #ifdef __APPLE__
@@ -702,7 +710,7 @@ bool vk_most_suitable_device_create(RenderContext *ctx) {
 
 bool vk_instance_create(RenderContext *ctx) {
     u32 ext_count, opt_count;
-    const char** extensions = get_required_extensions(ctx->window, &ext_count);
+    const char** extensions;
     VkResult vk_fail;
 
     VkApplicationInfo app_info = {
@@ -715,8 +723,6 @@ bool vk_instance_create(RenderContext *ctx) {
     VkInstanceCreateInfo instance_create_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
-        .enabledExtensionCount = ext_count,
-        .ppEnabledExtensionNames = extensions,
     };
 
 #ifdef __APPLE__
@@ -736,6 +742,12 @@ bool vk_instance_create(RenderContext *ctx) {
 
         .pfnUserCallback = vk_debug_handler,
     };
+
+    if (!(extensions = get_required_extensions(ctx->window, &ext_count)))
+        return false;
+
+    instance_create_info.enabledExtensionCount = ext_count;
+    instance_create_info.ppEnabledExtensionNames = extensions;
 
     if (get_log_level() == LOG_TRACE) {
         ValidationLayers* valid = &ctx->validation;

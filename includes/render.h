@@ -1,7 +1,6 @@
 #ifndef RENDER_H_
 #define RENDER_H_
 
-#include <stdbool.h>
 #include <vulkan/vulkan_core.h>
 #include <SDL2/SDL.h>
 

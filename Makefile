@@ -1,9 +1,6 @@
 CC = clang
 
-LIBS = `pkg-config --libs --cflags sdl2` \
-	   `pkg-config --libs --cflags vulkan`
-
-LDFLAGS = -fuse-ld=lld -flto=thin
+LDFLAGS = -flto=thin
 CFLAGS  = -std=c11 -fwrapv \
 		  -fno-strict-aliasing \
 		  -fno-delete-null-pointer-checks \
@@ -11,11 +8,17 @@ CFLAGS  = -std=c11 -fwrapv \
 		  -Wall \
 		  -Wfloat-equal \
 		  -Wstring-compare \
-		  -Wuninitialized
+		  -Wuninitialized \
 
-ifneq (, $(shell which lldb))
+CFLAGS += `pkg-config --cflags vulkan` \
+		  `pkg-config --cflags sdl2`
+
+LDFLAGS += `pkg-config --libs vulkan` \
+		   `pkg-config --libs sdl2`
+
+ifneq (, $(shell which lldb 2> /dev/null))
 DEBUGGER := lldb ./target/debug/main -o run -- --trace
-else ifneq (, $(shell which gdb))
+else ifneq (, $(shell which gdb 2> /dev/null))
 DEBUGGER := gdb --args ./target/debug/main --trace
 else
 DEBUGGER := ./target/debug/main --trace
@@ -24,7 +27,7 @@ endif
 SRCS = $(wildcard src/*.c)
 
 SHADERS := $(wildcard src/*.vert) $(wildcard src/*.frag)
-SHADERS := $(SHADERS:src/%=target/shaders/%.spv)
+SHADERS := $(SHADERS:src/%=target/%.spv)
 
 SAN_OBJS = $(SRCS:src/%.c=target/sanitize/%.o)
 DEB_OBJS = $(SRCS:src/%.c=target/debug/%.o)
@@ -49,9 +52,6 @@ release: target/release/main
 clean:
 	rm -rf target compile_commands.json
 
-target/shaders:
-	@mkdir -p $@
-
 target/sanitize:
 	@mkdir -p $@
 
@@ -61,15 +61,15 @@ target/debug:
 target/release:
 	@mkdir -p $@
 
-target/sanitize/main: target/sanitize target/shaders $(SAN_OBJS) $(SHADERS)
-	$(CC) $(LDFLAGS) $(LIBS) $(SAN_OBJS) -o $@
+target/sanitize/main: target/sanitize $(SAN_OBJS) $(SHADERS)
+	$(CC) $(LDFLAGS) $(SAN_OBJS) -o $@
 
-target/debug/main: target/debug target/shaders $(DEB_OBJS) $(SHADERS)
-	$(CC) $(LDFLAGS) $(LIBS) $(DEB_OBJS) -o $@
+target/debug/main: target/debug $(DEB_OBJS) $(SHADERS)
+	$(CC) $(LDFLAGS) $(DEB_OBJS) -o $@
 
-target/release/main: target/release target/shaders $(REL_OBJS) $(SHADERS)
-	$(CC) $(LDFLAGS) $(LIBS) $(REL_OBJS) -o $@
-	strip --strip-all target/release/main
+target/release/main: target/release $(REL_OBJS) $(SHADERS)
+	$(CC) $(LDFLAGS) $(REL_OBJS) -o $@
+	strip --strip-all $@
 
 target/sanitize/%.o: src/%.c
 	$(CC) $(CFLAGS) -Iincludes -o $@ -c $<
@@ -80,10 +80,10 @@ target/debug/%.o: src/%.c
 target/release/%.o: src/%.c
 	$(CC) $(CFLAGS) -Iincludes -o $@ -c $<
 
-target/shaders/%.vert.spv: src/%.vert
-	glslc -O -o $@ $<
+target/%.vert.spv: src/%.vert
+	glslangValidator -V -S vert -o $@ $<
 
-target/shaders/%.frag.spv: src/%.frag
-	glslc -O -o $@ $<
+target/%.frag.spv: src/%.frag
+	glslangValidator -V -S frag -o $@ $<
 
 .PHONY: all sanitize debug release clean
