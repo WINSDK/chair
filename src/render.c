@@ -11,8 +11,8 @@ void sdl_renderer_create(RenderContext *context) {
         "SDL2",
         SDL_WINDOWPOS_UNDEFINED,
         SDL_WINDOWPOS_UNDEFINED,
-        displayInfo.w / 1.5,
-        displayInfo.h / 1.5,
+        displayInfo.w / 2.0,
+        displayInfo.w / 2.0,
         SDL_WINDOW_VULKAN | SDL_WINDOW_ALLOW_HIGHDPI
     );
 

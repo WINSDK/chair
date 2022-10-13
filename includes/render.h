@@ -65,6 +65,11 @@ typedef struct {
 } Synchronization;
 
 typedef struct {
+    float pos[2];
+    float col[3];
+} Vertex;
+
+typedef struct {
     /* SDL application state */
     SDL_Window *window;
 
@@ -133,6 +138,18 @@ typedef struct {
 
     /* Vertex shader code with an entry points */
     VkShaderModule vert;
+
+    /* Vertices of an object to be renderer */
+    Vertex *vertices;
+
+    /* Vertices of an object to be renderer */
+    VkBuffer vertex_buf;
+
+    /* Memory that the `vertex_buf` refers to */
+    VkDeviceMemory vertex_memory;
+
+    /* Number of vertices to be renderer */
+    u32 vertices_count;
 
     /* Fragment shader code with an entry points */
     VkShaderModule frag;

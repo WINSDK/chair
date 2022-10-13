@@ -1,5 +1,6 @@
 #include "render.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <SDL2/SDL_vulkan.h>
 
@@ -717,7 +718,7 @@ bool vk_instance_create(RenderContext *ctx) {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .applicationVersion = VK_MAKE_VERSION(0, 0, 1),
         .engineVersion = VK_MAKE_VERSION(0, 0, 1),
-        .apiVersion = VK_API_VERSION_1_3,
+        .apiVersion = VK_API_VERSION_1_2,
     };
 
     VkInstanceCreateInfo instance_create_info = {
@@ -856,8 +857,8 @@ bool vk_render_pass_create(RenderContext *ctx) {
 
 bool vk_pipeline_create(RenderContext *ctx) {
     u32 vert_size, frag_size;
-    char* vert_bin = read_binary("./target/shaders/shader.vert.spv", &vert_size);
-    char* frag_bin = read_binary("./target/shaders/shader.frag.spv", &frag_size);
+    char* vert_bin;
+    char* frag_bin;
     VkResult vk_fail = VK_SUCCESS;
 
     VkPipelineShaderStageCreateInfo vert_shader_info = {
@@ -877,13 +878,38 @@ bool vk_pipeline_create(RenderContext *ctx) {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
     };
 
+    VkVertexInputBindingDescription binding_desc = {
+        .binding = 0,
+        .stride = sizeof(Vertex),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
+    };
+
+    VkVertexInputAttributeDescription vert_in_attr_pos = {
+        .binding = 0,
+        .location = 0,
+        .format = VK_FORMAT_R32G32_SFLOAT,
+        .offset = offsetof(Vertex, pos)
+    };
+
+    VkVertexInputAttributeDescription vert_col_attr_pos = {
+        .binding = 0,
+        .location = 1,
+        .format = VK_FORMAT_R32G32_SFLOAT,
+        .offset = offsetof(Vertex, col)
+    };
+
+    VkVertexInputAttributeDescription vert_attr_descs[2] = {
+        vert_in_attr_pos,
+        vert_col_attr_pos
+    };
+
     // TODO: `pVertexBindingDescriptions` and `pVertexAttributeDescriptions`
     VkPipelineVertexInputStateCreateInfo vertex_input_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 0,
-        .pVertexBindingDescriptions = NULL,
-        .vertexAttributeDescriptionCount = 0,
-        .pVertexAttributeDescriptions = NULL
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &binding_desc,
+        .vertexAttributeDescriptionCount = 2,
+        .pVertexAttributeDescriptions = &vert_attr_descs
     };
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly_info = {
@@ -958,6 +984,9 @@ bool vk_pipeline_create(RenderContext *ctx) {
         .pDepthStencilState = NULL,
     };
 
+    vert_bin = read_binary("./target/shader.vert.spv", &vert_size);
+    frag_bin = read_binary("./target/shader.frag.spv", &frag_size);
+
     if (vert_bin == NULL || frag_bin == NULL) {
         error("failed to read shader source");
         return false;
@@ -1031,6 +1060,110 @@ void vk_pipeline_destroy(RenderContext *ctx) {
     vkDestroyShaderModule(ctx->driver, ctx->frag, NULL);
 
     free(ctx->dynamic_states);
+}
+
+bool vk_vertex_buffers_create(RenderContext *ctx) {
+    VkMemoryRequirements mem_requirements;
+    VkPhysicalDeviceMemoryProperties mem_properties;
+    u32 idx;
+    void *vert_data;
+    VkResult vk_fail;
+
+    VkMemoryPropertyFlags mem_prop_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
+                                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+    VkBufferCreateInfo buf_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE
+    };
+
+    VkMemoryAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+    };
+
+    ctx->vertices = malloc(3 * sizeof(Vertex));
+
+    ctx->vertices[0].pos[0] = 0.0;
+    ctx->vertices[0].pos[1] = -0.5;
+    ctx->vertices[0].col[0] = 1.0;
+    ctx->vertices[0].col[1] = 0.0;
+    ctx->vertices[0].col[2] = 0.0;
+
+    ctx->vertices[1].pos[0] = 0.5;
+    ctx->vertices[1].pos[1] = 0.5;
+    ctx->vertices[1].col[0] = 0.0;
+    ctx->vertices[1].col[1] = 1.0;
+    ctx->vertices[1].col[2] = 0.0;
+
+    ctx->vertices[2].pos[0] = -0.5;
+    ctx->vertices[2].pos[1] = 0.5;
+    ctx->vertices[2].col[0] = 0.0;
+    ctx->vertices[2].col[1] = 0.0;
+    ctx->vertices[2].col[2] = 1.0;
+
+    ctx->vertices_count = 3;
+
+    buf_info.size = ctx->vertices_count * sizeof(Vertex);
+
+    if (vkCreateBuffer(ctx->driver, &buf_info, NULL, &ctx->vertex_buf)) {
+        error("failed to create buffer");
+        return false;
+    }
+
+    vkGetBufferMemoryRequirements(
+        ctx->driver,
+        ctx->vertex_buf,
+        &mem_requirements
+    );
+
+    alloc_info.memoryTypeIndex = mem_requirements.size;
+
+    vkGetPhysicalDeviceMemoryProperties(ctx->device, &mem_properties);
+
+    // find a compatible memory type
+    for (idx = 0; idx < mem_properties.memoryTypeCount; idx++) {
+        if (mem_requirements.memoryTypeBits & (1 << idx) &&
+            mem_properties.memoryTypes[idx].propertyFlags & mem_prop_flags) {
+            alloc_info.memoryTypeIndex = idx;
+            break;
+        }
+    }
+
+    if (vkAllocateMemory(ctx->driver, &alloc_info, NULL, &ctx->vertex_memory)) {
+        error("failed to allocate buffer memory");
+        return false;
+    }
+
+    if (vkBindBufferMemory(ctx->driver, ctx->vertex_buf, ctx->vertex_memory, 0)) {
+        error("failed to bind buffer memory");
+        return false;
+    }
+
+    vk_fail = vkMapMemory(
+        ctx->driver,
+        ctx->vertex_memory,
+        0,
+        buf_info.size,
+        0,
+        &vert_data
+    );
+
+    if (vk_fail) {
+        error("failed to retrieve address of buffer memory");
+        return false;
+    }
+
+    memcpy(vert_data, ctx->vertices, (usize)buf_info.size);
+    vkUnmapMemory(ctx->driver, ctx->vertex_memory);
+
+    return true;
+}
+
+void vk_vertex_buffers_destroy(RenderContext *ctx) {
+    vkDestroyBuffer(ctx->driver, ctx->vertex_buf, NULL);
+    vkFreeMemory(ctx->driver, ctx->vertex_memory, NULL);
+    free(ctx->vertices);
 }
 
 bool vk_cmd_pool_create(RenderContext *ctx) {
@@ -1122,7 +1255,9 @@ void vk_sync_primitives_destroy(RenderContext *ctx) {
 }
 
 bool vk_record_cmd_buffer(RenderContext *ctx, u32 image_idx) {
-    VkCommandBuffer frame_cmd_buffer = ctx->cmd_buffers[ctx->frame];
+    VkBuffer vertex_bufs[1] = { ctx->vertex_buf };
+    VkDeviceSize offsets[1] = {0};
+    VkCommandBuffer cmd_buffer = ctx->cmd_buffers[ctx->frame];
 
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1141,34 +1276,36 @@ bool vk_record_cmd_buffer(RenderContext *ctx, u32 image_idx) {
         .clearValueCount = 1,
     };
 
-    if (vkBeginCommandBuffer(frame_cmd_buffer, &begin_info))
+    if (vkBeginCommandBuffer(cmd_buffer, &begin_info))
         return false;
 
     /* ------------------------ render pass ------------------------ */
 
     vkCmdBeginRenderPass(
-        frame_cmd_buffer,
+        cmd_buffer,
         &render_pass_info,
         VK_SUBPASS_CONTENTS_INLINE
     );
 
     vkCmdBindPipeline(
-        frame_cmd_buffer,
+        cmd_buffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
         ctx->pipeline
     );
 
     // setting necessary dynamic state
-    vkCmdSetViewport(frame_cmd_buffer, 0, 1, &ctx->viewport);
-    vkCmdSetScissor(frame_cmd_buffer, 0, 1, &ctx->scissor);
+    vkCmdSetViewport(cmd_buffer, 0, 1, &ctx->viewport);
+    vkCmdSetScissor(cmd_buffer, 0, 1, &ctx->scissor);
 
-    vkCmdDraw(frame_cmd_buffer, 3, 1, 0, 0);
+    vkCmdBindVertexBuffers(cmd_buffer, 0, 1, vertex_bufs, offsets);
 
-    vkCmdEndRenderPass(frame_cmd_buffer);
+    vkCmdDraw(cmd_buffer, ctx->vertices_count, 1, 0, 0);
+
+    vkCmdEndRenderPass(cmd_buffer);
 
     /* ------------------------------------------------------------- */
 
-    return vkEndCommandBuffer(frame_cmd_buffer) == VK_SUCCESS;
+    return vkEndCommandBuffer(cmd_buffer) == VK_SUCCESS;
 }
 
 void vk_engine_create(RenderContext *ctx) {
@@ -1196,6 +1333,9 @@ void vk_engine_create(RenderContext *ctx) {
     if (!vk_cmd_pool_create(ctx))
         panic("failed to create command pool");
 
+    if (!vk_vertex_buffers_create(ctx))
+        panic("failed to create vertex buffers");
+
     if (!vk_cmd_buffer_alloc(ctx))
         panic("failed to create command buffer");
 
@@ -1216,6 +1356,7 @@ void vk_engine_destroy(RenderContext *ctx) {
     vk_pipeline_destroy(ctx);
     vkDestroyRenderPass(ctx->driver, ctx->render_pass, NULL);
     vk_swapchain_destroy(ctx);
+    vk_vertex_buffers_destroy(ctx);
     vkDestroyDevice(ctx->driver, NULL);
     vk_debugger_destroy(ctx);
     vkDestroySurfaceKHR(ctx->instance, ctx->surface, NULL);
