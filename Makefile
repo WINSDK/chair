@@ -39,7 +39,7 @@ all: target/release/main
 sanitize: CFLAGS  += -g3 -Og -fsanitize=address -fno-omit-frame-pointer
 sanitize: LDFLAGS += -fsanitize=address
 sanitize: target/sanitize/main
-	./target/sanitize/main --trace
+	./target/sanitize/main --trace 2>&1 | asan_symbolize-14
 
 debug: CFLAGS += -g3 -Og
 debug: target/debug/main

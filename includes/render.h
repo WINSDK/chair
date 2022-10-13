@@ -158,13 +158,16 @@ typedef struct {
     VkCommandPool cmd_pool;
 
     /* Commands to be submitted to the device queue */
-    VkCommandBuffer cmd_buffers[MAX_FRAMES_LOADED];
+    VkCommandBuffer cmd_bufs[MAX_FRAMES_LOADED];
 
     /* Synchronization objects required by `vk_engine_render`. */
     Synchronization sync[MAX_FRAMES_LOADED];
 
     /* Index of the current frame being renderer */
     u32 frame;
+
+    /* Details related to allocating memory on the GPU */
+    VkPhysicalDeviceMemoryProperties mem_prop;
 } RenderContext;
 
 void vk_engine_create(RenderContext *context);

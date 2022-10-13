@@ -1,3 +1,5 @@
+#include "SDL_shape.h"
+#include "chair.h"
 #include "render.h"
 
 #include <stddef.h>
@@ -249,9 +251,11 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_handler(
     if (strncmp(msg, "Validation Error: ", 18) == 0)
         msg += 18;
 
+    if (strncmp(msg, "Device Extension: ", 18) == 0)
+        msg += 18;
+
     switch (severity) {
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
-            printf("\x1b[1;38;5;4m[v]\e[m %s\n", msg);
             break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
             printf("\x1b[1;38;5;2m[v]\e[m %s\n", msg);
@@ -261,7 +265,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_handler(
             break;
         default:
             printf("\x1b[1;38;5;1m[v]\e[m %s\n", msg);
-            exit(1);
+            // __asm__("int3");
     }
 
     return VK_FALSE;
@@ -1062,26 +1066,129 @@ void vk_pipeline_destroy(RenderContext *ctx) {
     free(ctx->dynamic_states);
 }
 
-bool vk_vertex_buffers_create(RenderContext *ctx) {
-    VkMemoryRequirements mem_requirements;
-    VkPhysicalDeviceMemoryProperties mem_properties;
-    u32 idx;
-    void *vert_data;
-    VkResult vk_fail;
+bool copy_buf(RenderContext *ctx,
+              VkBuffer dst,
+              VkBuffer src,
+              VkDeviceSize size) {
+    VkCommandBuffer cmd_buf;
 
-    VkMemoryPropertyFlags mem_prop_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
-                                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    VkBufferCopy copy_region = {
+        .size = size
+    };
+
+    VkCommandBufferAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandPool = ctx->cmd_pool,
+        .commandBufferCount = 1
+    };
+
+    VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+    };
+
+    VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cmd_buf
+    };
+
+    if (vkAllocateCommandBuffers(ctx->driver, &alloc_info, &cmd_buf)) {
+        error("failed to allocate cmd buffers");
+        return false;
+    }
+
+    if (vkBeginCommandBuffer(cmd_buf, &begin_info)) {
+        error("failed to begin cmd buffer");
+        goto end;
+    }
+
+    vkCmdCopyBuffer(cmd_buf, src, dst, 1, &copy_region);
+
+    if (vkEndCommandBuffer(cmd_buf)) {
+        error("failed to end cmd buffer");
+        goto end;
+    }
+
+    if (vkQueueSubmit(ctx->queue, 1, &submit_info, NULL)) {
+        error("failed to submit queue");
+        goto end;
+    }
+
+    if (vkQueueWaitIdle(ctx->queue)) {
+        error("failed to wait for queue");
+        goto end;
+    }
+
+    vkFreeCommandBuffers(ctx->driver, ctx->cmd_pool, 1, &cmd_buf);
+    return true;
+
+end:
+    vkFreeCommandBuffers(ctx->driver, ctx->cmd_pool, 1, &cmd_buf);
+    return false;
+}
+
+bool create_buf(RenderContext *ctx,
+                VkDeviceSize size,
+                VkBufferUsageFlags usage,
+                VkMemoryPropertyFlags mem_prop_flags,
+                VkBuffer *buf,
+                VkDeviceMemory *buf_mem) {
+
+    VkMemoryRequirements mem_requirements;
+    u32 idx;
 
     VkBufferCreateInfo buf_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .size = size,
+        .usage = usage,
     };
 
     VkMemoryAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
     };
 
+    if (vkCreateBuffer(ctx->driver, &buf_info, NULL, buf))
+        return false;
+
+    vkGetBufferMemoryRequirements(ctx->driver, *buf, &mem_requirements);
+
+    alloc_info.allocationSize = mem_requirements.size;
+
+    // find a compatible memory type
+    for (idx = 0; idx < ctx->mem_prop.memoryTypeCount; idx++) {
+        if (mem_requirements.memoryTypeBits & (1 << idx) &&
+            ctx->mem_prop.memoryTypes[idx].propertyFlags & mem_prop_flags) {
+            alloc_info.memoryTypeIndex = idx;
+            break;
+        }
+    }
+
+    if (vkAllocateMemory(ctx->driver, &alloc_info, NULL, buf_mem)) {
+        vkDestroyBuffer(ctx->driver, *buf, NULL);
+        error("failed to allocate buffer memory");
+        return false;
+    }
+
+    if (vkBindBufferMemory(ctx->driver, *buf, *buf_mem, 0)) {
+        error("failed to bind buffer memory");
+        vkDestroyBuffer(ctx->driver, *buf, NULL);
+        vkFreeMemory(ctx->driver, *buf_mem, NULL);
+        return false;
+    }
+
+    return true;
+}
+
+bool vk_vertex_buffers_create(RenderContext *ctx) {
+    void *data;
+    VkDeviceSize buf_size;
+    VkBuffer staging_buf;
+    VkDeviceMemory staging_buf_mem;
+
+    /* ------------------------ set vertices  ------------------------ */
     ctx->vertices = malloc(3 * sizeof(Vertex));
 
     ctx->vertices[0].pos[0] = 0.0;
@@ -1103,59 +1210,48 @@ bool vk_vertex_buffers_create(RenderContext *ctx) {
     ctx->vertices[2].col[2] = 1.0;
 
     ctx->vertices_count = 3;
+    /* --------------------------------------------------------------- */
 
-    buf_info.size = ctx->vertices_count * sizeof(Vertex);
+    buf_size = sizeof(Vertex) * ctx->vertices_count;
 
-    if (vkCreateBuffer(ctx->driver, &buf_info, NULL, &ctx->vertex_buf)) {
-        error("failed to create buffer");
+    if (!create_buf(ctx, buf_size,
+                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    &staging_buf, &staging_buf_mem)) {
+        error("failed to create staging buffer");
         return false;
     }
 
-    vkGetBufferMemoryRequirements(
-        ctx->driver,
-        ctx->vertex_buf,
-        &mem_requirements
-    );
-
-    alloc_info.memoryTypeIndex = mem_requirements.size;
-
-    vkGetPhysicalDeviceMemoryProperties(ctx->device, &mem_properties);
-
-    // find a compatible memory type
-    for (idx = 0; idx < mem_properties.memoryTypeCount; idx++) {
-        if (mem_requirements.memoryTypeBits & (1 << idx) &&
-            mem_properties.memoryTypes[idx].propertyFlags & mem_prop_flags) {
-            alloc_info.memoryTypeIndex = idx;
-            break;
-        }
-    }
-
-    if (vkAllocateMemory(ctx->driver, &alloc_info, NULL, &ctx->vertex_memory)) {
-        error("failed to allocate buffer memory");
-        return false;
-    }
-
-    if (vkBindBufferMemory(ctx->driver, ctx->vertex_buf, ctx->vertex_memory, 0)) {
-        error("failed to bind buffer memory");
-        return false;
-    }
-
-    vk_fail = vkMapMemory(
-        ctx->driver,
-        ctx->vertex_memory,
-        0,
-        buf_info.size,
-        0,
-        &vert_data
-    );
-
-    if (vk_fail) {
+    if (vkMapMemory(ctx->driver, staging_buf_mem, 0, buf_size, 0, &data)) {
         error("failed to retrieve address of buffer memory");
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
         return false;
     }
 
-    memcpy(vert_data, ctx->vertices, (usize)buf_info.size);
-    vkUnmapMemory(ctx->driver, ctx->vertex_memory);
+    memcpy(data, ctx->vertices, (usize)buf_size);
+    vkUnmapMemory(ctx->driver, staging_buf_mem);
+
+    if (!create_buf(ctx, buf_size,
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                    &ctx->vertex_buf, &ctx->vertex_memory)) {
+        error("failed to create vertex buffer");
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        return false;
+    }
+
+    if (!copy_buf(ctx, ctx->vertex_buf, staging_buf, buf_size)) {
+        error("failed to copy staging buf into vertex buf");
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        return false;
+    }
+
+    vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+    vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
 
     return true;
 }
@@ -1192,13 +1288,12 @@ bool vk_cmd_buffer_alloc(RenderContext *ctx) {
     return vkAllocateCommandBuffers(
         ctx->driver,
         &alloc_info,
-        ctx->cmd_buffers
+        ctx->cmd_bufs
     ) == VK_SUCCESS;
 }
 
 bool vk_sync_primitives_create(RenderContext *ctx) {
     u32 idx;
-    VkResult vk_fail = VK_SUCCESS;
     Synchronization *sync;
 
     VkSemaphoreCreateInfo semaphore_info = {
@@ -1211,6 +1306,7 @@ bool vk_sync_primitives_create(RenderContext *ctx) {
     };
 
     for (idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
+        VkResult vk_fail = VK_SUCCESS;
         sync = &ctx->sync[idx];
 
         vk_fail |= vkCreateSemaphore(
@@ -1257,10 +1353,11 @@ void vk_sync_primitives_destroy(RenderContext *ctx) {
 bool vk_record_cmd_buffer(RenderContext *ctx, u32 image_idx) {
     VkBuffer vertex_bufs[1] = { ctx->vertex_buf };
     VkDeviceSize offsets[1] = {0};
-    VkCommandBuffer cmd_buffer = ctx->cmd_buffers[ctx->frame];
+    VkCommandBuffer cmd_buffer = ctx->cmd_bufs[ctx->frame];
 
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
     };
 
     // black with 100% opacity
@@ -1391,7 +1488,7 @@ void vk_engine_render(RenderContext* ctx) {
         .pWaitSemaphores = wait_semaphores,
         .waitSemaphoreCount = 1,
         .pWaitDstStageMask = wait_stages,
-        .pCommandBuffers = &ctx->cmd_buffers[ctx->frame],
+        .pCommandBuffers = &ctx->cmd_bufs[ctx->frame],
         .commandBufferCount = 1,
         .pSignalSemaphores = signal_semaphores,
         .signalSemaphoreCount = 1
@@ -1438,7 +1535,7 @@ void vk_engine_render(RenderContext* ctx) {
     }
 
     vkResetFences(ctx->driver, 1, &sync->renderers_busy);
-    vkResetCommandBuffer(ctx->cmd_buffers[ctx->frame], 0);
+    vkResetCommandBuffer(ctx->cmd_bufs[ctx->frame], 0);
 
     vk_record_cmd_buffer(ctx, image_idx);
 
