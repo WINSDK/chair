@@ -108,7 +108,7 @@ noreturn void panic(const char *format, ...) {
     exit(1);
 }
 
-void *vmalloc(usize size) {
+inline void *vmalloc(usize size) {
     void *data = malloc(size);
 
     if (data == NULL)

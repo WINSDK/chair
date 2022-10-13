@@ -1,9 +1,9 @@
 #ifndef CHAIR_H_
 #define CHAIR_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
 #include <time.h>
 
 typedef uint8_t u8;
@@ -39,10 +39,12 @@ void panic(const char *format, ...);
 
 void trace_array(const char **msgs, u32 len, const char *format, ...);
 
+void *vmalloc(usize);
+
 struct timespec now();
 struct timespec time_elapsed(struct timespec start);
 
-char* read_binary(const char *path, u32 *bytes_read);
+char *read_binary(const char *path, u32 *bytes_read);
 
 u32 clamp(u32 val, u32 min, u32 max);
 u32 min(u32 a, u32 b);

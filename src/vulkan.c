@@ -15,7 +15,7 @@ const char **get_required_extensions(SDL_Window *window, u32 *count) {
         return NULL;
     }
 
-    extensions = malloc((*count + 2) * sizeof(char *));
+    extensions = vmalloc((*count + 2) * sizeof(char *));
 
     if (!SDL_Vulkan_GetInstanceExtensions(window, count, extensions)) {
         error("failed to retrieve all required extensions: '%s'",
@@ -41,10 +41,10 @@ const char **get_optional_extensions(u32 *count) {
 
     vkEnumerateInstanceExtensionProperties(NULL, count, NULL);
 
-    extensions = malloc(*count * sizeof(VkExtensionProperties));
+    extensions = vmalloc(*count * sizeof(VkExtensionProperties));
     vkEnumerateInstanceExtensionProperties(NULL, count, extensions);
 
-    extensions_names = malloc(*count * sizeof(char *));
+    extensions_names = vmalloc(*count * sizeof(char *));
     for (idx = 0; idx < *count; idx++)
         extensions_names[idx] = extensions[idx].extensionName;
 
@@ -65,7 +65,7 @@ bool matches_device_requirements(VkPhysicalDevice device) {
     if (vkEnumerateDeviceExtensionProperties(device, NULL, &count, NULL))
         return false;
 
-    extensions = malloc(count * sizeof(VkExtensionProperties));
+    extensions = vmalloc(count * sizeof(VkExtensionProperties));
     if (vkEnumerateDeviceExtensionProperties(device, NULL, &count, extensions))
         return false;
 
@@ -83,7 +83,7 @@ bool matches_device_requirements(VkPhysicalDevice device) {
     }
 
     if (get_log_level() == LOG_TRACE) {
-        const char **extension_names = malloc(count * sizeof(char *));
+        const char **extension_names = vmalloc(count * sizeof(char *));
 
         for (idx = 0; idx < count; idx++)
             extension_names[idx] = extensions[idx].extensionName;
@@ -107,7 +107,7 @@ bool try_preferred_present_mode(RenderContext *ctx,
     present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
         ctx->device, ctx->surface, &count, NULL);
 
-    present_modes = malloc(count * sizeof(VkPresentModeKHR *));
+    present_modes = vmalloc(count * sizeof(VkPresentModeKHR *));
     present_support_result = vkGetPhysicalDeviceSurfacePresentModesKHR(
         ctx->device, ctx->surface, &count, present_modes);
 
@@ -117,7 +117,7 @@ bool try_preferred_present_mode(RenderContext *ctx,
     }
 
     if (get_log_level() == LOG_TRACE) {
-        const char **names = malloc(count * sizeof(char *));
+        const char **names = vmalloc(count * sizeof(char *));
 
         for (idx = 0; idx < count; idx++) {
             switch (present_modes[idx]) {
@@ -187,7 +187,7 @@ bool find_queue_families(RenderContext *ctx) {
     VkQueueFamilyProperties *families;
 
     vkGetPhysicalDeviceQueueFamilyProperties(ctx->device, &count, NULL);
-    families = malloc(count * sizeof(VkQueueFamilyProperties));
+    families = vmalloc(count * sizeof(VkQueueFamilyProperties));
     vkGetPhysicalDeviceQueueFamilyProperties(ctx->device, &count, families);
 
     for (idx = 0; idx < count; idx++) {
@@ -208,10 +208,10 @@ void vk_valididation_create(ValidationLayers *valid) {
     u32 idx;
 
     vkEnumerateInstanceLayerProperties(&valid->layer_count, NULL);
-    valid->data = malloc(valid->layer_count * sizeof(VkLayerProperties));
+    valid->data = vmalloc(valid->layer_count * sizeof(VkLayerProperties));
     vkEnumerateInstanceLayerProperties(&valid->layer_count, valid->data);
 
-    valid->layers = malloc(valid->layer_count * sizeof(char *));
+    valid->layers = vmalloc(valid->layer_count * sizeof(char *));
     for (idx = 0; idx < valid->layer_count; idx++)
         valid->layers[idx] = valid->data[idx].layerName;
 
@@ -329,7 +329,7 @@ bool vk_image_views_create(RenderContext *ctx) {
     u32 idx;
     SwapChainDescriptor *chain = &ctx->swapchain;
 
-    chain->views = malloc(chain->image_count * sizeof(VkImageView));
+    chain->views = vmalloc(chain->image_count * sizeof(VkImageView));
 
     VkImageViewCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -369,7 +369,7 @@ bool vk_framebuffers_create(RenderContext *ctx) {
         .height = ctx->dimensions.height,
         .layers = 1};
 
-    chain->framebuffers = malloc(chain->image_count * sizeof(VkFramebuffer));
+    chain->framebuffers = vmalloc(chain->image_count * sizeof(VkFramebuffer));
 
     for (idx = 0; idx < chain->image_count; idx++) {
         attachments[0] = chain->views[idx];
@@ -444,7 +444,7 @@ bool vk_swapchain_create(RenderContext *ctx) {
     if (chain->format_count == 0 || vk_fail)
         return false;
 
-    chain->formats = malloc(chain->format_count * sizeof(VkSurfaceFormatKHR));
+    chain->formats = vmalloc(chain->format_count * sizeof(VkSurfaceFormatKHR));
     vk_fail = vkGetPhysicalDeviceSurfaceFormatsKHR(
         ctx->device,
         ctx->surface,
@@ -489,7 +489,7 @@ bool vk_swapchain_create(RenderContext *ctx) {
         return false;
     }
 
-    chain->images = malloc(chain->image_count * sizeof(VkImage));
+    chain->images = vmalloc(chain->image_count * sizeof(VkImage));
     vk_fail = vkGetSwapchainImagesKHR(
         ctx->driver,
         chain->data,
@@ -616,7 +616,7 @@ bool vk_most_suitable_device_create(RenderContext *ctx) {
     if (device_count == 0)
         return false;
 
-    devices = malloc(device_count * sizeof(VkPhysicalDevice));
+    devices = vmalloc(device_count * sizeof(VkPhysicalDevice));
     vkEnumeratePhysicalDevices(ctx->instance, &device_count, devices);
 
     preferred_device = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
@@ -942,7 +942,7 @@ bool vk_pipeline_create(RenderContext *ctx) {
     shader_stages[0] = vert_shader_info;
     shader_stages[1] = frag_shader_info;
 
-    ctx->dynamic_states = malloc(2 * sizeof(VkDynamicState));
+    ctx->dynamic_states = vmalloc(2 * sizeof(VkDynamicState));
     ctx->dynamic_state_count = 2;
     dynamic_create_info.dynamicStateCount = ctx->dynamic_state_count;
 
@@ -1108,7 +1108,7 @@ bool vk_vertices_create(RenderContext *ctx) {
     /* --------------------- assign vertices --------------------- */
     ctx->vertices_count = 4 * grid_size;
 
-    ctx->vertices = malloc(ctx->vertices_count * sizeof(Vertex));
+    ctx->vertices = vmalloc(ctx->vertices_count * sizeof(Vertex));
 
     // create a 8x8 grid made out of 0.25x0.25 sized square's.
     for (y = 0; y < 9; y++) {
@@ -1144,7 +1144,7 @@ bool vk_vertices_create(RenderContext *ctx) {
     /* --------------------- assign indices--------------------- */
     ctx->indices_count = 6 * grid_size;
 
-    ctx->indices = malloc(ctx->indices_count * sizeof(u16));
+    ctx->indices = vmalloc(ctx->indices_count * sizeof(u16));
 
     // for each square set the indices to the next 4 vertices
     //
