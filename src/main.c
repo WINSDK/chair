@@ -1,7 +1,7 @@
 #include "render.h"
 
-#include <stdio.h>
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 void event_loop(RenderContext *context) {

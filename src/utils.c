@@ -1,10 +1,10 @@
-#include <unistd.h>
-#include <time.h>
+#include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdnoreturn.h>
-#include <stdatomic.h>
-#include <stdarg.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "chair.h"
 
@@ -19,7 +19,8 @@ void set_log_level(LogLevel level) {
 }
 
 void trace(const char *format, ...) {
-    if (get_log_level() < LOG_TRACE) return;
+    if (get_log_level() < LOG_TRACE)
+        return;
 
     va_list ap;
     va_start(ap, format);
@@ -30,8 +31,7 @@ void trace(const char *format, ...) {
     va_end(ap);
 }
 
-
-void trace_array(const char** msgs, u32 len, const char *format, ...) {
+void trace_array(const char **msgs, u32 len, const char *format, ...) {
     if (get_log_level() < LOG_TRACE)
         return;
 
@@ -108,11 +108,21 @@ noreturn void panic(const char *format, ...) {
     exit(1);
 }
 
-#define CLOCK_REALTIME			 0
-#define CLOCK_PROCESS_CPUTIME_ID 2
-#define CLOCK_THREAD_CPUTIME_ID	 3
+void *vmalloc(usize size) {
+    void *data = malloc(size);
 
-struct timespec now() {
+    if (data == NULL)
+        panic("failed to allocate %zu bytes", size);
+
+    return malloc(size);
+}
+
+#define CLOCK_REALTIME 0
+#define CLOCK_PROCESS_CPUTIME_ID 2
+#define CLOCK_THREAD_CPUTIME_ID 3
+
+    struct timespec
+    now() {
     struct timespec time;
 
 #ifdef __linux__
@@ -133,9 +143,9 @@ struct timespec time_elapsed(struct timespec start) {
     timespec_get(&time, TIME_UTC);
 #endif
 
-    if ((time.tv_nsec-start.tv_nsec)<0) {
+    if ((time.tv_nsec - start.tv_nsec) < 0) {
         temp.tv_sec = time.tv_sec - start.tv_sec - 1;
-        temp.tv_nsec = 1000000000 + time.tv_nsec-start.tv_nsec;
+        temp.tv_nsec = 1000000000 + time.tv_nsec - start.tv_nsec;
     } else {
         temp.tv_sec = time.tv_sec - start.tv_sec;
         temp.tv_nsec = time.tv_nsec - start.tv_nsec;
@@ -145,7 +155,7 @@ struct timespec time_elapsed(struct timespec start) {
 }
 
 /// Reads file and returns NULL if it failed
-char* read_binary(const char *path, u32 *bytes_read) {
+char *read_binary(const char *path, u32 *bytes_read) {
     FILE *file = fopen(path, "rb");
     if (file == NULL)
         return NULL;
@@ -154,7 +164,7 @@ char* read_binary(const char *path, u32 *bytes_read) {
     size_t size = ftell(file);
     rewind(file);
 
-    char* bytes = malloc(size);
+    char *bytes = malloc(size);
     *bytes_read = fread(bytes, 1, size, file);
 
     if (bytes == NULL)
