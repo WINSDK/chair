@@ -11,8 +11,8 @@ void sdl_renderer_create(RenderContext *context) {
         "SDL2",
         SDL_WINDOWPOS_UNDEFINED,
         SDL_WINDOWPOS_UNDEFINED,
-        displayInfo.w / 2.0,
-        displayInfo.w / 2.0,
+        displayInfo.w * 2 / 3,
+        displayInfo.h * 2 / 3,
         SDL_WINDOW_VULKAN | SDL_WINDOW_ALLOW_HIGHDPI
     );
 
@@ -22,8 +22,11 @@ void sdl_renderer_create(RenderContext *context) {
         SDL_RENDERER_SOFTWARE
     );
 
-    info("created window with size: %ix%i", 
-            displayInfo.w / 2, displayInfo.h / 2);
+    info(
+        "created window with size: %ix%i",
+        displayInfo.w * 2 / 3,
+        displayInfo.h * 2 / 3
+    );
 
     SDL_SetRenderDrawColor(context->renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(context->renderer);

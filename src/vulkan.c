@@ -887,23 +887,19 @@ bool vk_pipeline_create(RenderContext *ctx) {
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
     };
 
-    VkVertexInputAttributeDescription vert_in_attr_pos = {
-        .binding = 0,
-        .location = 0,
-        .format = VK_FORMAT_R32G32_SFLOAT,
-        .offset = offsetof(Vertex, pos)
-    };
-
-    VkVertexInputAttributeDescription vert_col_attr_pos = {
-        .binding = 0,
-        .location = 1,
-        .format = VK_FORMAT_R32G32_SFLOAT,
-        .offset = offsetof(Vertex, col)
-    };
-
     VkVertexInputAttributeDescription vert_attr_descs[2] = {
-        vert_in_attr_pos,
-        vert_col_attr_pos
+	    {
+          .binding = 0,
+	      .location = 0,
+	      .format = VK_FORMAT_R32G32_SFLOAT,
+	      .offset = offsetof(Vertex, pos)
+        },
+        {
+          .binding = 0,
+	      .location = 1,
+	      .format = VK_FORMAT_R32G32_SFLOAT,
+	      .offset = offsetof(Vertex, col)
+        }
     };
 
     // TODO: `pVertexBindingDescriptions` and `pVertexAttributeDescriptions`
@@ -912,7 +908,7 @@ bool vk_pipeline_create(RenderContext *ctx) {
         .vertexBindingDescriptionCount = 1,
         .pVertexBindingDescriptions = &binding_desc,
         .vertexAttributeDescriptionCount = 2,
-        .pVertexAttributeDescriptions = &vert_attr_descs
+        .pVertexAttributeDescriptions = vert_attr_descs
     };
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly_info = {
@@ -1188,37 +1184,39 @@ bool vk_vertices_create(RenderContext *ctx) {
     VkDeviceMemory staging_buf_mem;
     float x = -1.0;
     float y = -1.0;
-    u32 grid_size = 64;
-    u32 idx = 0;
+    float x_inc = 2.0 / 16.0;
+    float y_inc = 2.0 / 9.0;
+    u32 grid_size = 16 * 9;
+    u16 idx = 0;
 
-    /* ------------------------ set vertices  ------------------------ */
+    /* --------------------- assign vertices --------------------- */
     ctx->vertices_count = 4 * grid_size;
 
     ctx->vertices = malloc(ctx->vertices_count * sizeof(Vertex));
 
     // create a 8x8 grid made out of 0.25x0.25 sized square's.
-    for (y = -1.0; y < 1.0; y += 0.25) {
-        for (x = -1.0; x < 1.0; x += 0.25) {
-            ctx->vertices[idx + 0].pos[0] = x;
-            ctx->vertices[idx + 0].pos[1] = y;
+    for (y = 0; y < 9; y++) {
+        for (x = 0; x < 16; x++) {
+            ctx->vertices[idx + 0].pos[0] = x_inc * x - 1.0;
+            ctx->vertices[idx + 0].pos[1] = y_inc * y - 1.0;
             ctx->vertices[idx + 0].col[0] = 1.0;
             ctx->vertices[idx + 0].col[1] = 0.0;
             ctx->vertices[idx + 0].col[2] = 0.0;
 
-            ctx->vertices[idx + 1].pos[0] = x + 0.25;
-            ctx->vertices[idx + 1].pos[1] = y;
+            ctx->vertices[idx + 1].pos[0] = x_inc * x - 1.0 + x_inc;
+            ctx->vertices[idx + 1].pos[1] = y_inc * y - 1.0;
             ctx->vertices[idx + 1].col[0] = 0.0;
             ctx->vertices[idx + 1].col[1] = 1.0;
             ctx->vertices[idx + 1].col[2] = 0.0;
 
-            ctx->vertices[idx + 2].pos[0] = x + 0.25;
-            ctx->vertices[idx + 2].pos[1] = y + 0.25;
+            ctx->vertices[idx + 2].pos[0] = x_inc * x - 1.0 + x_inc;
+            ctx->vertices[idx + 2].pos[1] = y_inc * y - 1.0 + y_inc;
             ctx->vertices[idx + 2].col[0] = 0.0;
             ctx->vertices[idx + 2].col[1] = 0.0;
             ctx->vertices[idx + 2].col[2] = 1.0;
 
-            ctx->vertices[idx + 3].pos[0] = x;
-            ctx->vertices[idx + 3].pos[1] = y + 0.25;
+            ctx->vertices[idx + 3].pos[0] = x_inc * x - 1.0;
+            ctx->vertices[idx + 3].pos[1] = y_inc * y - 1.0 + y_inc;
             ctx->vertices[idx + 3].col[0] = 0.0;
             ctx->vertices[idx + 3].col[1] = 0.0;
             ctx->vertices[idx + 3].col[2] = 1.0;
@@ -1227,7 +1225,7 @@ bool vk_vertices_create(RenderContext *ctx) {
         }
     }
 
-    /* ------------------------ set indices -------------------------- */
+    /* --------------------- assign indices--------------------- */
     ctx->indices_count = 6 * grid_size;
 
     ctx->indices = malloc(ctx->indices_count * sizeof(u16));
