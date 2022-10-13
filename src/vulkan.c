@@ -1,4 +1,3 @@
-#include "SDL_shape.h"
 #include "chair.h"
 #include "render.h"
 
@@ -241,7 +240,7 @@ void vk_valididation_destroy(ValidationLayers *valid) {
     free(valid->data);
 }
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_handler(
+VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_handler(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT type,
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
@@ -265,7 +264,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_debug_handler(
             break;
         default:
             printf("\x1b[1;38;5;1m[v]\e[m %s\n", msg);
-            // __asm__("int3");
+            __asm__("int3");
     }
 
     return VK_FALSE;
@@ -1182,36 +1181,74 @@ bool create_buf(RenderContext *ctx,
     return true;
 }
 
-bool vk_vertex_buffers_create(RenderContext *ctx) {
+bool vk_vertices_create(RenderContext *ctx) {
     void *data;
     VkDeviceSize buf_size;
     VkBuffer staging_buf;
     VkDeviceMemory staging_buf_mem;
+    float x = -1.0;
+    float y = -1.0;
+    u32 grid_size = 64;
+    u32 idx = 0;
 
     /* ------------------------ set vertices  ------------------------ */
-    ctx->vertices = malloc(3 * sizeof(Vertex));
+    ctx->vertices_count = 4 * grid_size;
 
-    ctx->vertices[0].pos[0] = 0.0;
-    ctx->vertices[0].pos[1] = -0.5;
-    ctx->vertices[0].col[0] = 1.0;
-    ctx->vertices[0].col[1] = 0.0;
-    ctx->vertices[0].col[2] = 0.0;
+    ctx->vertices = malloc(ctx->vertices_count * sizeof(Vertex));
 
-    ctx->vertices[1].pos[0] = 0.5;
-    ctx->vertices[1].pos[1] = 0.5;
-    ctx->vertices[1].col[0] = 0.0;
-    ctx->vertices[1].col[1] = 1.0;
-    ctx->vertices[1].col[2] = 0.0;
+    // create a 8x8 grid made out of 0.25x0.25 sized square's.
+    for (y = -1.0; y < 1.0; y += 0.25) {
+        for (x = -1.0; x < 1.0; x += 0.25) {
+            ctx->vertices[idx + 0].pos[0] = x;
+            ctx->vertices[idx + 0].pos[1] = y;
+            ctx->vertices[idx + 0].col[0] = 1.0;
+            ctx->vertices[idx + 0].col[1] = 0.0;
+            ctx->vertices[idx + 0].col[2] = 0.0;
 
-    ctx->vertices[2].pos[0] = -0.5;
-    ctx->vertices[2].pos[1] = 0.5;
-    ctx->vertices[2].col[0] = 0.0;
-    ctx->vertices[2].col[1] = 0.0;
-    ctx->vertices[2].col[2] = 1.0;
+            ctx->vertices[idx + 1].pos[0] = x + 0.25;
+            ctx->vertices[idx + 1].pos[1] = y;
+            ctx->vertices[idx + 1].col[0] = 0.0;
+            ctx->vertices[idx + 1].col[1] = 1.0;
+            ctx->vertices[idx + 1].col[2] = 0.0;
 
-    ctx->vertices_count = 3;
-    /* --------------------------------------------------------------- */
+            ctx->vertices[idx + 2].pos[0] = x + 0.25;
+            ctx->vertices[idx + 2].pos[1] = y + 0.25;
+            ctx->vertices[idx + 2].col[0] = 0.0;
+            ctx->vertices[idx + 2].col[1] = 0.0;
+            ctx->vertices[idx + 2].col[2] = 1.0;
 
+            ctx->vertices[idx + 3].pos[0] = x;
+            ctx->vertices[idx + 3].pos[1] = y + 0.25;
+            ctx->vertices[idx + 3].col[0] = 0.0;
+            ctx->vertices[idx + 3].col[1] = 0.0;
+            ctx->vertices[idx + 3].col[2] = 1.0;
+
+            idx+=4;
+        }
+    }
+
+    /* ------------------------ set indices -------------------------- */
+    ctx->indices_count = 6 * grid_size;
+
+    ctx->indices = malloc(ctx->indices_count * sizeof(u16));
+
+    // for each square set the indices to the next 4 vertices
+    //
+    // the base indices are [0, 1, 2, 2, 3, 0] so each other square
+    // will use the same indices but with the offset of it's index
+    for (idx = 0; idx < grid_size; idx++) {
+        u16 off_ind = idx * 4;
+        u16 off_idx = idx * 6;
+
+        ctx->indices[off_idx + 0] = off_ind + 0;
+        ctx->indices[off_idx + 1] = off_ind + 1;
+        ctx->indices[off_idx + 2] = off_ind + 2;
+        ctx->indices[off_idx + 3] = off_ind + 2;
+        ctx->indices[off_idx + 4] = off_ind + 3;
+        ctx->indices[off_idx + 5] = off_ind + 0;
+    }
+
+    /* -------------------initialize vertex buffers ------------------ */
     buf_size = sizeof(Vertex) * ctx->vertices_count;
 
     if (!create_buf(ctx, buf_size,
@@ -1219,12 +1256,12 @@ bool vk_vertex_buffers_create(RenderContext *ctx) {
 			        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                     &staging_buf, &staging_buf_mem)) {
-        error("failed to create staging buffer");
+        error("failed to create vertex staging buffer");
         return false;
     }
 
     if (vkMapMemory(ctx->driver, staging_buf_mem, 0, buf_size, 0, &data)) {
-        error("failed to retrieve address of buffer memory");
+        error("failed to map vertex buffer memory");
         vkDestroyBuffer(ctx->driver, staging_buf, NULL);
         return false;
     }
@@ -1253,13 +1290,59 @@ bool vk_vertex_buffers_create(RenderContext *ctx) {
     vkDestroyBuffer(ctx->driver, staging_buf, NULL);
     vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
 
+    /* -------------------initialize index buffers ------------------ */
+    buf_size = sizeof(u16) * ctx->indices_count;
+
+    if (!create_buf(ctx, buf_size,
+                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    &staging_buf, &staging_buf_mem)) {
+        error("failed to create index staging buffer");
+        return false;
+    }
+
+    if (vkMapMemory(ctx->driver, staging_buf_mem, 0, buf_size, 0, &data)) {
+        error("failed to map index buffer memory");
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        return false;
+    }
+
+    memcpy(data, ctx->indices, (usize)buf_size);
+    vkUnmapMemory(ctx->driver, staging_buf_mem);
+
+    if (!create_buf(ctx, buf_size,
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                    &ctx->index_buf, &ctx->index_memory)) {
+        error("failed to create index buffer");
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        return false;
+    }
+
+    if (!copy_buf(ctx, ctx->index_buf, staging_buf, buf_size)) {
+        error("failed to copy staging buf into index buf");
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        return false;
+    }
+
+    vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+    vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+
     return true;
 }
 
-void vk_vertex_buffers_destroy(RenderContext *ctx) {
+void vk_vertices_destroy(RenderContext *ctx) {
     vkDestroyBuffer(ctx->driver, ctx->vertex_buf, NULL);
     vkFreeMemory(ctx->driver, ctx->vertex_memory, NULL);
     free(ctx->vertices);
+
+    vkDestroyBuffer(ctx->driver, ctx->index_buf, NULL);
+    vkFreeMemory(ctx->driver, ctx->index_memory, NULL);
+    free(ctx->indices);
 }
 
 bool vk_cmd_pool_create(RenderContext *ctx) {
@@ -1395,8 +1478,9 @@ bool vk_record_cmd_buffer(RenderContext *ctx, u32 image_idx) {
     vkCmdSetScissor(cmd_buffer, 0, 1, &ctx->scissor);
 
     vkCmdBindVertexBuffers(cmd_buffer, 0, 1, vertex_bufs, offsets);
+    vkCmdBindIndexBuffer(cmd_buffer, ctx->index_buf, 0, VK_INDEX_TYPE_UINT16);
 
-    vkCmdDraw(cmd_buffer, ctx->vertices_count, 1, 0, 0);
+    vkCmdDrawIndexed(cmd_buffer, ctx->indices_count, 1, 0, 0, 0);
 
     vkCmdEndRenderPass(cmd_buffer);
 
@@ -1430,7 +1514,7 @@ void vk_engine_create(RenderContext *ctx) {
     if (!vk_cmd_pool_create(ctx))
         panic("failed to create command pool");
 
-    if (!vk_vertex_buffers_create(ctx))
+    if (!vk_vertices_create(ctx))
         panic("failed to create vertex buffers");
 
     if (!vk_cmd_buffer_alloc(ctx))
@@ -1453,7 +1537,7 @@ void vk_engine_destroy(RenderContext *ctx) {
     vk_pipeline_destroy(ctx);
     vkDestroyRenderPass(ctx->driver, ctx->render_pass, NULL);
     vk_swapchain_destroy(ctx);
-    vk_vertex_buffers_destroy(ctx);
+    vk_vertices_destroy(ctx);
     vkDestroyDevice(ctx->driver, NULL);
     vk_debugger_destroy(ctx);
     vkDestroySurfaceKHR(ctx->instance, ctx->surface, NULL);

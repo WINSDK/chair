@@ -142,14 +142,26 @@ typedef struct {
     /* Vertices of an object to be renderer */
     Vertex *vertices;
 
-    /* Vertices of an object to be renderer */
-    VkBuffer vertex_buf;
-
-    /* Memory that the `vertex_buf` refers to */
-    VkDeviceMemory vertex_memory;
-
     /* Number of vertices to be renderer */
     u32 vertices_count;
+
+    /* Memory on the GPU that holds the `vertices` */
+    VkDeviceMemory vertex_memory;
+
+    /* Reference to the memory in `vertex_memory` */
+    VkBuffer vertex_buf;
+
+    /* Offsets into `vertices` */
+    u16 *indices;
+
+    /* Number of vertices for the vertices */
+    u32 indices_count;
+
+    /* Memory on the GPU that holds the `indices` */
+    VkDeviceMemory index_memory;
+
+    /* Reference to the memory in `indices_memory` */
+    VkBuffer index_buf;
 
     /* Fragment shader code with an entry points */
     VkShaderModule frag;

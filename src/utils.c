@@ -32,7 +32,8 @@ void trace(const char *format, ...) {
 
 
 void trace_array(const char** msgs, u32 len, const char *format, ...) {
-    if (get_log_level() < LOG_TRACE || len == 0) return;
+    if (get_log_level() < LOG_TRACE)
+        return;
 
     va_list ap;
     va_start(ap, format);
@@ -40,6 +41,14 @@ void trace_array(const char** msgs, u32 len, const char *format, ...) {
     vprintf(format, ap);
 
     printf("[");
+
+    if (len == 0) {
+        printf("]\n");
+        fflush(stdout);
+        va_end(ap);
+        return;
+    }
+
     for (u32 idx = 0; idx < len; idx++) {
         if (idx == len - 1)
             printf("%s]", msgs[idx]);
@@ -53,7 +62,8 @@ void trace_array(const char** msgs, u32 len, const char *format, ...) {
 }
 
 void info(const char *format, ...) {
-    if (get_log_level() < LOG_INFO) return;
+    if (get_log_level() < LOG_INFO)
+        return;
 
     va_list ap;
     va_start(ap, format);
@@ -65,7 +75,8 @@ void info(const char *format, ...) {
 }
 
 void warn(const char *format, ...) {
-    if (get_log_level() < LOG_WARN) return;
+    if (get_log_level() < LOG_WARN)
+        return;
 
     va_list ap;
     va_start(ap, format);
@@ -136,7 +147,8 @@ struct timespec time_elapsed(struct timespec start) {
 /// Reads file and returns NULL if it failed
 char* read_binary(const char *path, u32 *bytes_read) {
     FILE *file = fopen(path, "rb");
-    if (file == NULL) return NULL;
+    if (file == NULL)
+        return NULL;
 
     fseek(file, 0, SEEK_END);
     size_t size = ftell(file);
@@ -145,7 +157,8 @@ char* read_binary(const char *path, u32 *bytes_read) {
     char* bytes = malloc(size);
     *bytes_read = fread(bytes, 1, size, file);
 
-    if (bytes == NULL) return NULL;
+    if (bytes == NULL)
+        return NULL;
 
     if (fclose(file) != 0 || *bytes_read != size) {
         free(bytes);
