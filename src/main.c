@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void event_loop(RenderContext *context) {
+void event_loop(RenderContext *ctx) {
     const u8 *board = SDL_GetKeyboardState(NULL);
     SDL_Event event;
 
@@ -17,7 +17,7 @@ void event_loop(RenderContext *context) {
         if (board[SDL_SCANCODE_C] && board[SDL_SCANCODE_LCTRL])
             break;
 
-        vk_engine_render(context);
+        vk_engine_render(ctx);
     }
 }
 

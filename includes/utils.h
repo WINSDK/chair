@@ -1,5 +1,5 @@
-#ifndef CHAIR_H_
-#define CHAIR_H_
+#ifndef UTILS_H_
+#define UTILS_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -50,4 +50,4 @@ u32 clamp(u32 val, u32 min, u32 max);
 u32 min(u32 a, u32 b);
 u32 max(u32 a, u32 b);
 
-#endif // CHAIR_H_
+#endif // UTILS_H_

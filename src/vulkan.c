@@ -1,4 +1,4 @@
-#include "chair.h"
+#include "utils.h"
 #include "render.h"
 
 #include <SDL2/SDL_vulkan.h>
@@ -54,11 +54,26 @@ const char **get_optional_extensions(u32 *count) {
     return extensions_names;
 }
 
+u32 vk_find_memory_type(RenderContext *ctx, VkMemoryRequirements reqs,
+                        VkMemoryPropertyFlags flags) {
+    u32 idx;
+
+    for (idx = 0; idx < ctx->mem_prop.memoryTypeCount; idx++) {
+        if (reqs.memoryTypeBits & (1 << idx) &&
+            ctx->mem_prop.memoryTypes[idx].propertyFlags & flags) {
+            return idx;
+        }
+    }
+
+    warn("failed to find any compatible memory type");
+    return idx;
+}
+
 bool matches_device_requirements(VkPhysicalDevice device) {
     u32 count, idx;
     VkPhysicalDeviceFeatures features;
     VkExtensionProperties *extensions;
-    bool required_extensions_found;
+    bool required_extensions_found = false;
 
     vkGetPhysicalDeviceFeatures(device, &features);
 
@@ -69,7 +84,6 @@ bool matches_device_requirements(VkPhysicalDevice device) {
     if (vkEnumerateDeviceExtensionProperties(device, NULL, &count, extensions))
         return false;
 
-    required_extensions_found = false;
     for (idx = 0; idx < count; idx++) {
         const char *name = extensions[idx].extensionName;
 
@@ -93,7 +107,7 @@ bool matches_device_requirements(VkPhysicalDevice device) {
     }
 
     free(extensions);
-    return features.geometryShader;
+    return features.geometryShader && features.samplerAnisotropy;
 }
 
 // Sets correct present mode on success. In the case of failing to find the
@@ -170,7 +184,7 @@ bool try_preferred_swapchain_format(RenderContext *ctx) {
     for (idx = 0; idx < ctx->swapchain.format_count; idx++) {
         surface_format = ctx->swapchain.formats[idx];
 
-        if (ctx->swapchain.formats[idx].format == VK_FORMAT_B8G8R8A8_SRGB &&
+        if (ctx->swapchain.formats[idx].format == VK_FORMAT_R8G8B8A8_SRGB &&
             surface_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
 
             ctx->surface_format = surface_format;
@@ -286,8 +300,12 @@ bool vk_debugger_create(RenderContext *ctx) {
     if (!CreateDebugUtilsMessengerEXT || !DestroyDebugUtilsMessengerEXT)
         return VK_ERROR_EXTENSION_NOT_PRESENT;
 
-    return CreateDebugUtilsMessengerEXT(ctx->instance, &create_info, NULL,
-                                        &ctx->messenger) == VK_SUCCESS;
+    return CreateDebugUtilsMessengerEXT(
+        ctx->instance,
+        &create_info,
+        NULL,
+        &ctx->messenger
+    ) == VK_SUCCESS;
 }
 
 void vk_debugger_destroy(RenderContext *ctx) {
@@ -325,32 +343,57 @@ void create_swapchain_present_extent(RenderContext *ctx) {
     }
 }
 
-bool vk_image_views_create(RenderContext *ctx) {
-    u32 idx;
-    SwapChainDescriptor *chain = &ctx->swapchain;
+/// generate a method to interact with images (image views).
+///
+/// `img_view` is the result of creating an image view
+bool vk_image_view_create(RenderContext *ctx,
+                          VkImage img,
+                          VkFormat format,
+                          VkImageView *img_view) {
 
-    chain->views = vmalloc(chain->image_count * sizeof(VkImageView));
-
-    VkImageViewCreateInfo create_info = {
+    VkImageViewCreateInfo view_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = img,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = ctx->surface_format.format,
-        .components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
-        .components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
-        .components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
-        .components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .format = format,
         .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
         .subresourceRange.baseMipLevel = 0,
         .subresourceRange.levelCount = 1,
         .subresourceRange.baseArrayLayer = 0,
-        .subresourceRange.layerCount = 1};
+        .subresourceRange.layerCount = 1
+    };
+
+    if (vkCreateImageView(ctx->driver, &view_info, NULL, img_view))
+        return false;
+
+    return true;
+}
+
+bool vk_swapchain_image_views_create(RenderContext *ctx) {
+    u32 idx;
+    bool success;
+    SwapChainDescriptor *chain = &ctx->swapchain;
+
+    chain->views = vmalloc(chain->image_count * sizeof(VkImageView));
 
     for (idx = 0; idx < chain->image_count; idx++) {
-        create_info.image = chain->images[idx];
+        success = vk_image_view_create(
+            ctx,
+            chain->images[idx],
+            ctx->surface_format.format,
+            &chain->views[idx]
+        );
 
-        if (vkCreateImageView(ctx->driver, &create_info, NULL,
-                              &chain->views[idx]))
+        if (!success) {
+            u32 jdx;
+
+            if (idx != 0)
+                for (jdx = 0; jdx < idx; jdx++)
+                    vkDestroyImage(ctx->driver, chain->images[jdx], NULL);
+
+            free(chain->views);
             return false;
+        }
     }
 
     return true;
@@ -404,7 +447,7 @@ bool vk_swapchain_create(RenderContext *ctx) {
     VkResult vk_fail;
 
     VkSurfaceFormatKHR fallback_surface_format = {
-        .format = VK_FORMAT_UNDEFINED,
+        .format = VK_FORMAT_B8G8R8A8_SRGB,
         .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
     };
 
@@ -455,8 +498,10 @@ bool vk_swapchain_create(RenderContext *ctx) {
     if (chain->format_count == 0 || vk_fail)
         return false;
 
-    if (!try_preferred_swapchain_format(ctx))
+    if (!try_preferred_swapchain_format(ctx)) {
+        warn("couldnt find suitable swapchain format, using fallback");
         ctx->surface_format = fallback_surface_format;
+    }
 
     create_info.imageFormat = ctx->surface_format.format;
 
@@ -531,7 +576,7 @@ bool vk_swapchain_recreate(RenderContext *ctx) {
     if (!vk_swapchain_create(ctx))
         return false;
 
-    if (!vk_image_views_create(ctx))
+    if (!vk_swapchain_image_views_create(ctx))
         return false;
 
     if (!vk_framebuffers_create(ctx))
@@ -552,7 +597,10 @@ bool vk_device_create(RenderContext *ctx) {
     VkBool32 surface_supported = false;
     VkResult vk_fail;
 
-    VkPhysicalDeviceFeatures device_features = {};
+    VkPhysicalDeviceFeatures device_features = {
+        .samplerAnisotropy = VK_TRUE
+    };
+
     VkDeviceCreateInfo device_create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1,
@@ -609,7 +657,6 @@ bool vk_most_suitable_device_create(RenderContext *ctx) {
     u32 device_count, idx;
     VkPhysicalDevice *devices;
     VkPhysicalDeviceType preferred_device;
-    VkPhysicalDeviceProperties properties;
 
     vkEnumeratePhysicalDevices(ctx->instance, &device_count, NULL);
 
@@ -625,11 +672,11 @@ bool vk_most_suitable_device_create(RenderContext *ctx) {
     for (idx = 0; idx < device_count; idx++) {
         ctx->device = devices[idx];
 
-        vkGetPhysicalDeviceProperties(ctx->device, &properties);
-        if (properties.deviceType != preferred_device)
+        vkGetPhysicalDeviceProperties(ctx->device, &ctx->dev_prop);
+        if (ctx->dev_prop.deviceType != preferred_device)
             continue;
 
-        trace("GPU: %s", properties.deviceName);
+        trace("GPU: %s", ctx->dev_prop.deviceName);
 
         if (!matches_device_requirements(ctx->device))
             continue;
@@ -648,11 +695,11 @@ bool vk_most_suitable_device_create(RenderContext *ctx) {
     for (idx = 0; idx < device_count; idx++) {
         ctx->device = devices[idx];
 
-        vkGetPhysicalDeviceProperties(ctx->device, &properties);
-        if (properties.deviceType == preferred_device)
+        vkGetPhysicalDeviceProperties(ctx->device, &ctx->dev_prop);
+        if (ctx->dev_prop.deviceType == preferred_device)
             continue;
 
-        trace("GPU: %s", properties.deviceName);
+        trace("GPU: %s", ctx->dev_prop.deviceName);
 
         if (!matches_device_requirements(ctx->device))
             continue;
@@ -732,16 +779,21 @@ bool vk_instance_create(RenderContext *ctx) {
     return vk_fail == VK_SUCCESS;
 }
 
-VkResult vk_shader_module_create(RenderContext *ctx, char *binary,
-                                 u32 binary_size, VkShaderModule *module) {
+bool vk_shader_module_create(RenderContext *ctx, char *binary,
+                             u32 binary_size, VkShaderModule *module) {
 
     VkShaderModuleCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = binary_size,
-        .pCode = (u32 *)binary
+        .pCode = (const u32 *)binary
     };
 
-    return vkCreateShaderModule(ctx->driver, &create_info, NULL, module);
+    return vkCreateShaderModule(
+        ctx->driver,
+        &create_info,
+        NULL,
+        module
+    ) == VK_SUCCESS;
 }
 
 bool vk_render_pass_create(RenderContext *ctx) {
@@ -782,8 +834,12 @@ bool vk_render_pass_create(RenderContext *ctx) {
         .pDependencies = &dependency,
         .dependencyCount = 1};
 
-    return vkCreateRenderPass(ctx->driver, &render_pass_info, NULL,
-                              &ctx->render_pass) == VK_SUCCESS;
+    return vkCreateRenderPass(
+        ctx->driver,
+        &render_pass_info,
+        NULL,
+        &ctx->render_pass
+    ) == VK_SUCCESS;
 }
 
 // VK_PRIMITIVE_TOPOLOGY_POINT_LIST: points from vertices
@@ -810,19 +866,22 @@ bool vk_pipeline_create(RenderContext *ctx) {
     u32 vert_size, frag_size;
     char *vert_bin;
     char *frag_bin;
-    VkResult vk_fail = VK_SUCCESS;
+    bool success = true;
 
     VkPipelineShaderStageCreateInfo vert_shader_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_VERTEX_BIT,
-        .pName = "main"};
+        .pName = "main"
+    };
 
     VkPipelineShaderStageCreateInfo frag_shader_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-        .pName = "main"};
+        .pName = "main"
+    };
 
     VkPipelineShaderStageCreateInfo shader_stages[2];
+
     VkPipelineDynamicStateCreateInfo dynamic_create_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
     };
@@ -830,17 +889,23 @@ bool vk_pipeline_create(RenderContext *ctx) {
     VkVertexInputBindingDescription binding_desc = {
         .binding = 0,
         .stride = sizeof(Vertex),
-        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
+    };
 
     VkVertexInputAttributeDescription vert_attr_descs[2] = {
-        {.binding = 0,
-         .location = 0,
-         .format = VK_FORMAT_R32G32_SFLOAT,
-         .offset = offsetof(Vertex, pos)},
-        {.binding = 0,
-         .location = 1,
-         .format = VK_FORMAT_R32G32_SFLOAT,
-         .offset = offsetof(Vertex, col)}};
+        {
+            .binding = 0,
+            .location = 0,
+            .format = VK_FORMAT_R32G32_SFLOAT,
+            .offset = offsetof(Vertex, pos)
+        },
+        {
+            .binding = 0,
+            .location = 1,
+            .format = VK_FORMAT_R32G32_SFLOAT,
+            .offset = offsetof(Vertex, tex)
+        }
+    };
 
     // TODO: `pVertexBindingDescriptions` and `pVertexAttributeDescriptions`
     VkPipelineVertexInputStateCreateInfo vertex_input_info = {
@@ -848,7 +913,8 @@ bool vk_pipeline_create(RenderContext *ctx) {
         .vertexBindingDescriptionCount = 1,
         .pVertexBindingDescriptions = &binding_desc,
         .vertexAttributeDescriptionCount = 2,
-        .pVertexAttributeDescriptions = vert_attr_descs};
+        .pVertexAttributeDescriptions = vert_attr_descs
+    };
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -872,12 +938,14 @@ bool vk_pipeline_create(RenderContext *ctx) {
         .lineWidth = 1.0,
         .cullMode = VK_CULL_MODE_BACK_BIT,
         .frontFace = VK_FRONT_FACE_CLOCKWISE,
-        .depthBiasEnable = VK_FALSE};
+        .depthBiasEnable = VK_FALSE
+    };
 
     VkPipelineMultisampleStateCreateInfo multisampling_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .sampleShadingEnable = VK_FALSE,
-        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT
+    };
 
     VkPipelineColorBlendAttachmentState color_blend_attachment = {
         .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -889,23 +957,21 @@ bool vk_pipeline_create(RenderContext *ctx) {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .logicOpEnable = VK_FALSE,
         .attachmentCount = 1,
-        .pAttachments = &color_blend_attachment};
+        .pAttachments = &color_blend_attachment
+    };
 
     VkPipelineLayoutCreateInfo pipeline_layout_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 0,
-        .pSetLayouts = NULL,
-        .pushConstantRangeCount = 0,
-        .pPushConstantRanges = NULL};
+        .setLayoutCount = 1,
+        .pSetLayouts = &ctx->desc_set_layout,
+    };
 
     VkGraphicsPipelineCreateInfo pipeline_info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .renderPass = ctx->render_pass,
         .subpass = 0, // index into the render pass for what subpass to use
-        .basePipelineHandle =
-            NULL, // other potential pipeline to use for faster creation
+        .basePipelineHandle = NULL, // other potential pipeline to use for faster creation
         .basePipelineIndex = -1, // of pipelines that share functionality
-        .pStages = shader_stages,
         .stageCount = 2,
         .pVertexInputState = &vertex_input_info,
         .pInputAssemblyState = &input_assembly_info,
@@ -925,13 +991,13 @@ bool vk_pipeline_create(RenderContext *ctx) {
         return false;
     }
 
-    vk_fail |= vk_shader_module_create(ctx, frag_bin, frag_size, &ctx->frag);
-    vk_fail |= vk_shader_module_create(ctx, vert_bin, vert_size, &ctx->vert);
+    success |= vk_shader_module_create(ctx, frag_bin, frag_size, &ctx->frag);
+    success |= vk_shader_module_create(ctx, vert_bin, vert_size, &ctx->vert);
 
     free(vert_bin);
     free(frag_bin);
 
-    if (vk_fail) {
+    if (!success) {
         error("failed to create shader module");
         return false;
     }
@@ -941,6 +1007,7 @@ bool vk_pipeline_create(RenderContext *ctx) {
 
     shader_stages[0] = vert_shader_info;
     shader_stages[1] = frag_shader_info;
+    pipeline_info.pStages = shader_stages;
 
     ctx->dynamic_states = vmalloc(2 * sizeof(VkDynamicState));
     ctx->dynamic_state_count = 2;
@@ -963,19 +1030,29 @@ bool vk_pipeline_create(RenderContext *ctx) {
     ctx->scissor.extent = ctx->dimensions;
     viewport_info.pScissors = &ctx->scissor;
 
-    vk_fail = vkCreatePipelineLayout(ctx->driver, &pipeline_layout_info, NULL,
-                                     &ctx->pipeline_layout);
+    success = vkCreatePipelineLayout(
+        ctx->driver,
+        &pipeline_layout_info,
+        NULL,
+        &ctx->pipeline_layout
+    ) == VK_SUCCESS;
 
-    if (vk_fail)
+    if (!success) {
+        error("failed to create pipeline layout");
         return false;
+    }
 
     pipeline_info.layout = ctx->pipeline_layout;
 
-    // NOTE: `vkCreateGraphicsPipelines` takes a list of pipelines to create at
-    // once
-    return vkCreateGraphicsPipelines(ctx->driver, VK_NULL_HANDLE, 1,
-                                     &pipeline_info, NULL,
-                                     &ctx->pipeline) == VK_SUCCESS;
+    // `vkCreateGraphicsPipelines` takes a list of pipelines to create at once
+    return vkCreateGraphicsPipelines(
+        ctx->driver,
+        NULL,
+        1,
+        &pipeline_info,
+        NULL,
+        &ctx->pipeline
+    ) == VK_SUCCESS;
 }
 
 void vk_pipeline_destroy(RenderContext *ctx) {
@@ -987,67 +1064,219 @@ void vk_pipeline_destroy(RenderContext *ctx) {
     free(ctx->dynamic_states);
 }
 
-bool copy_buf(RenderContext *ctx, VkBuffer dst, VkBuffer src,
-              VkDeviceSize size) {
-    VkCommandBuffer cmd_buf;
+bool vk_descriptor_layouts_create(RenderContext *ctx) {
+    VkDescriptorSetLayoutBinding sampler_layout_binding = {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+    };
 
-    VkBufferCopy copy_region = {.size = size};
+    // can take multiply bindings
+    VkDescriptorSetLayoutCreateInfo layout_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &sampler_layout_binding,
+    };
 
-    VkCommandBufferAllocateInfo alloc_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandPool = ctx->cmd_pool,
-        .commandBufferCount = 1};
+    return vkCreateDescriptorSetLayout(
+        ctx->driver,
+        &layout_info,
+        NULL,
+        &ctx->desc_set_layout
+    ) == VK_SUCCESS;
+}
 
-    VkCommandBufferBeginInfo begin_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+bool vk_descriptor_pool_create(RenderContext *ctx) {
+    // pool big enough for a sampler
+    VkDescriptorPoolSize pool_size = {
+        .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = MAX_FRAMES_LOADED
+    };
 
-    VkSubmitInfo submit_info = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                                .commandBufferCount = 1,
-                                .pCommandBuffers = &cmd_buf};
+    VkDescriptorPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+        .maxSets = MAX_FRAMES_LOADED
+    };
 
-    if (vkAllocateCommandBuffers(ctx->driver, &alloc_info, &cmd_buf)) {
-        error("failed to allocate cmd buffers");
+    return vkCreateDescriptorPool(
+        ctx->driver,
+        &pool_info,
+        NULL,
+        &ctx->desc_pool
+    ) == VK_SUCCESS;
+}
+
+bool vk_descriptor_sets_create(RenderContext *ctx) {
+    u32 idx, jdx;
+    VkDescriptorSetLayout desc_set_layouts[MAX_FRAMES_LOADED];
+
+    VkDescriptorSetAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = ctx->desc_pool,
+    };
+
+    VkDescriptorImageInfo image_info = {
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .sampler = ctx->sampler
+    };
+
+    VkWriteDescriptorSet desc_set = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstBinding = 0,
+        .dstArrayElement = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = 1,
+        .pImageInfo = &image_info
+    };
+
+    // copy the same descriptor set layout for each frame we render
+    // memcpy(desc_set_layouts, &ctx->desc_set_layout, MAX_FRAMES_LOADED);
+    for (idx = 0; idx < MAX_FRAMES_LOADED; idx++)
+        desc_set_layouts[idx] = ctx->desc_set_layout;
+
+    alloc_info.pSetLayouts = desc_set_layouts;
+    alloc_info.descriptorSetCount = MAX_FRAMES_LOADED;
+
+    if (vkAllocateDescriptorSets(ctx->driver, &alloc_info, ctx->desc_sets)) {
+        error("failed to allocate descriptor sets");
         return false;
     }
 
-    if (vkBeginCommandBuffer(cmd_buf, &begin_info)) {
-        error("failed to begin cmd buffer");
-        goto end;
+    // for every frame
+    for (idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
+        desc_set.dstSet = ctx->desc_sets[idx];
+
+        // for every image texture
+        for (jdx = 0; jdx < ctx->image_count; jdx++) {
+            image_info.imageView = ctx->images[jdx].view;
+
+            // update the sampler
+            vkUpdateDescriptorSets(
+                ctx->driver,
+                1,
+                &desc_set,
+                0,
+                NULL
+            );
+        }
     }
 
-    vkCmdCopyBuffer(cmd_buf, src, dst, 1, &copy_region);
+    return true;
+}
 
+void vk_descriptors_destroy(RenderContext *ctx) {
+    vkDestroyDescriptorPool(ctx->driver, ctx->desc_pool, NULL);
+    vkDestroyDescriptorSetLayout(ctx->driver, ctx->desc_set_layout, NULL);
+}
+
+bool vk_cmd_pool_create(RenderContext *ctx) {
+    VkCommandPoolCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = ctx->queue_family_indices};
+
+    return vkCreateCommandPool(
+        ctx->driver,
+        &create_info,
+        NULL,
+        &ctx->cmd_pool
+    ) == VK_SUCCESS;
+}
+
+bool vk_cmd_buffers_alloc(RenderContext *ctx,
+                          VkCommandBuffer *cmd_bufs,
+                          u32 count) {
+
+    VkCommandBufferAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = ctx->cmd_pool,
+        .commandBufferCount = count,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    };
+
+    return vkAllocateCommandBuffers(
+        ctx->driver,
+        &alloc_info,
+        cmd_bufs
+    ) == VK_SUCCESS;
+}
+
+/// cmd_buf is the result of creating and beginning a command buffer
+bool vk_cmd_oneshot_start(RenderContext *ctx, VkCommandBuffer *cmd_buf) {
+    VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+    };
+
+    if (!vk_cmd_buffers_alloc(ctx, cmd_buf, 1)) {
+        error("failed to allocate command buffer");
+        return false;
+    }
+
+    if (vkBeginCommandBuffer(*cmd_buf, &begin_info)) {
+        error("failed to begin command buffer");
+        vkFreeCommandBuffers(ctx->driver, ctx->cmd_pool, 1, cmd_buf);
+        return false;
+    }
+
+    return true;
+}
+
+bool vk_cmd_oneshot_end(RenderContext *ctx, VkCommandBuffer cmd_buf) {
     if (vkEndCommandBuffer(cmd_buf)) {
-        error("failed to end cmd buffer");
-        goto end;
+        error("failed to end command buffer");
+        return false;
     }
+
+    VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pCommandBuffers = &cmd_buf,
+        .commandBufferCount = 1,
+    };
 
     if (vkQueueSubmit(ctx->queue, 1, &submit_info, NULL)) {
-        error("failed to submit queue");
-        goto end;
+        error("failed to submit command buffer to queue");
+        return false;
     }
 
     if (vkQueueWaitIdle(ctx->queue)) {
         error("failed to wait for queue");
-        goto end;
+        return false;
     }
 
     vkFreeCommandBuffers(ctx->driver, ctx->cmd_pool, 1, &cmd_buf);
-    return true;
 
-end:
-    vkFreeCommandBuffers(ctx->driver, ctx->cmd_pool, 1, &cmd_buf);
-    return false;
+    return true;
 }
 
-bool create_buf(RenderContext *ctx, VkDeviceSize size, VkBufferUsageFlags usage,
-                VkMemoryPropertyFlags mem_prop_flags, VkBuffer *buf,
-                VkDeviceMemory *buf_mem) {
+bool vk_buffer_copy(RenderContext *ctx, VkBuffer dst, VkBuffer src,
+                    VkDeviceSize size) {
 
-    VkMemoryRequirements mem_requirements;
-    u32 idx;
+    VkCommandBuffer cmd_buf;
+    VkBufferCopy copy_region = {
+        .size = size
+    };
+
+    if (!vk_cmd_oneshot_start(ctx, &cmd_buf))
+        return false;
+
+    vkCmdCopyBuffer(cmd_buf, src, dst, 1, &copy_region);
+
+    if (!vk_cmd_oneshot_end(ctx, cmd_buf))
+        return false;
+
+    return true;
+}
+
+bool vk_buffer_create(RenderContext *ctx, VkDeviceSize size,
+                      VkBufferUsageFlags usage,
+                      VkMemoryPropertyFlags flags,
+                      VkBuffer *buf, VkDeviceMemory *buf_mem) {
+
+    VkMemoryRequirements mem_reqs;
 
     VkBufferCreateInfo buf_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1063,18 +1292,14 @@ bool create_buf(RenderContext *ctx, VkDeviceSize size, VkBufferUsageFlags usage,
     if (vkCreateBuffer(ctx->driver, &buf_info, NULL, buf))
         return false;
 
-    vkGetBufferMemoryRequirements(ctx->driver, *buf, &mem_requirements);
+    vkGetBufferMemoryRequirements(ctx->driver, *buf, &mem_reqs);
 
-    alloc_info.allocationSize = mem_requirements.size;
-
-    // find a compatible memory type
-    for (idx = 0; idx < ctx->mem_prop.memoryTypeCount; idx++) {
-        if (mem_requirements.memoryTypeBits & (1 << idx) &&
-            ctx->mem_prop.memoryTypes[idx].propertyFlags & mem_prop_flags) {
-            alloc_info.memoryTypeIndex = idx;
-            break;
-        }
-    }
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex = vk_find_memory_type(
+        ctx,
+        mem_reqs,
+        flags
+    );
 
     if (vkAllocateMemory(ctx->driver, &alloc_info, NULL, buf_mem)) {
         vkDestroyBuffer(ctx->driver, *buf, NULL);
@@ -1092,80 +1317,55 @@ bool create_buf(RenderContext *ctx, VkDeviceSize size, VkBufferUsageFlags usage,
     return true;
 }
 
+bool vk_buffer_copy_to_image(RenderContext *ctx, VkBuffer buf, VkImage img,
+                             u32 width, u32 height) {
+
+    VkCommandBuffer cmd_buf;
+
+    VkBufferImageCopy region = {
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .imageSubresource.mipLevel = 0,
+        .imageSubresource.baseArrayLayer = 0,
+        .imageSubresource.layerCount = 1,
+        .imageOffset = { 0, 0, 0 },
+        .imageExtent = { width, height, 1 }
+    };
+
+    if (!vk_cmd_oneshot_start(ctx, &cmd_buf))
+        return false;
+
+    vkCmdCopyBufferToImage(
+        cmd_buf,
+        buf,
+        img,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region
+    );
+
+    if (!vk_cmd_oneshot_end(ctx, cmd_buf))
+        return false;
+
+    return true;
+}
+
 bool vk_vertices_create(RenderContext *ctx) {
     void *data;
     VkDeviceSize buf_size;
     VkBuffer staging_buf;
     VkDeviceMemory staging_buf_mem;
-    float x = -1.0;
-    float y = -1.0;
-    float x_inc = 2.0 / 16.0;
-    float y_inc = 2.0 / 9.0;
-    u32 grid_size = 16 * 9;
-    u16 idx = 0;
     bool success;
 
-    /* --------------------- assign vertices --------------------- */
-    ctx->vertices_count = 4 * grid_size;
-
-    ctx->vertices = vmalloc(ctx->vertices_count * sizeof(Vertex));
-
-    // create a 8x8 grid made out of 0.25x0.25 sized square's.
-    for (y = 0; y < 9; y++) {
-        for (x = 0; x < 16; x++) {
-            ctx->vertices[idx + 0].pos[0] = x_inc * x - 1.0;
-            ctx->vertices[idx + 0].pos[1] = y_inc * y - 1.0;
-            ctx->vertices[idx + 0].col[0] = 1.0;
-            ctx->vertices[idx + 0].col[1] = 0.0;
-            ctx->vertices[idx + 0].col[2] = 0.0;
-
-            ctx->vertices[idx + 1].pos[0] = x_inc * x - 1.0 + x_inc;
-            ctx->vertices[idx + 1].pos[1] = y_inc * y - 1.0;
-            ctx->vertices[idx + 1].col[0] = 0.0;
-            ctx->vertices[idx + 1].col[1] = 1.0;
-            ctx->vertices[idx + 1].col[2] = 0.0;
-
-            ctx->vertices[idx + 2].pos[0] = x_inc * x - 1.0 + x_inc;
-            ctx->vertices[idx + 2].pos[1] = y_inc * y - 1.0 + y_inc;
-            ctx->vertices[idx + 2].col[0] = 0.0;
-            ctx->vertices[idx + 2].col[1] = 0.0;
-            ctx->vertices[idx + 2].col[2] = 1.0;
-
-            ctx->vertices[idx + 3].pos[0] = x_inc * x - 1.0;
-            ctx->vertices[idx + 3].pos[1] = y_inc * y - 1.0 + y_inc;
-            ctx->vertices[idx + 3].col[0] = 0.0;
-            ctx->vertices[idx + 3].col[1] = 0.0;
-            ctx->vertices[idx + 3].col[2] = 1.0;
-
-            idx += 4;
-        }
-    }
-
-    /* --------------------- assign indices--------------------- */
-    ctx->indices_count = 6 * grid_size;
-
-    ctx->indices = vmalloc(ctx->indices_count * sizeof(u16));
-
-    // for each square set the indices to the next 4 vertices
-    //
-    // the base indices are [0, 1, 2, 2, 3, 0] so each other square
-    // will use the same indices but with the offset of it's index
-    for (idx = 0; idx < grid_size; idx++) {
-        u16 off_ind = idx * 4;
-        u16 off_idx = idx * 6;
-
-        ctx->indices[off_idx + 0] = off_ind + 0;
-        ctx->indices[off_idx + 1] = off_ind + 1;
-        ctx->indices[off_idx + 2] = off_ind + 2;
-        ctx->indices[off_idx + 3] = off_ind + 2;
-        ctx->indices[off_idx + 4] = off_ind + 3;
-        ctx->indices[off_idx + 5] = off_ind + 0;
-    }
+    // generate all required vertices and associated indices
+    vertices_data_create(ctx);
 
     /* -------------------initialize vertex buffers ------------------ */
     buf_size = sizeof(Vertex) * ctx->vertices_count;
 
-    success = create_buf(
+    success = vk_buffer_create(
         ctx,
         buf_size,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -1189,14 +1389,14 @@ bool vk_vertices_create(RenderContext *ctx) {
     memcpy(data, ctx->vertices, (usize)buf_size);
     vkUnmapMemory(ctx->driver, staging_buf_mem);
 
-    success = create_buf(
+    success = vk_buffer_create(
         ctx,
         buf_size,
         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         &ctx->vertex_buf,
-        &ctx->vertex_memory
+        &ctx->vertex_mem
     );
 
     if (!success) {
@@ -1204,7 +1404,7 @@ bool vk_vertices_create(RenderContext *ctx) {
         goto end;
     }
 
-    if (!copy_buf(ctx, ctx->vertex_buf, staging_buf, buf_size)) {
+    if (!vk_buffer_copy(ctx, ctx->vertex_buf, staging_buf, buf_size)) {
         error("failed to copy staging buf into vertex buf");
         goto end;
     }
@@ -1215,7 +1415,7 @@ bool vk_vertices_create(RenderContext *ctx) {
     /* -------------------initialize index buffers ------------------ */
     buf_size = sizeof(u16) * ctx->indices_count;
 
-    success = create_buf(
+    success = vk_buffer_create(
         ctx,
         buf_size,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -1239,14 +1439,14 @@ bool vk_vertices_create(RenderContext *ctx) {
     memcpy(data, ctx->indices, (usize)buf_size);
     vkUnmapMemory(ctx->driver, staging_buf_mem);
 
-    success = create_buf(
+    success = vk_buffer_create(
         ctx,
         buf_size,
         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         &ctx->index_buf,
-        &ctx->index_memory
+        &ctx->index_mem
     );
 
     if (!success) {
@@ -1254,7 +1454,7 @@ bool vk_vertices_create(RenderContext *ctx) {
         goto end;
     }
 
-    if (!copy_buf(ctx, ctx->index_buf, staging_buf, buf_size)) {
+    if (!vk_buffer_copy(ctx, ctx->index_buf, staging_buf, buf_size)) {
         error("failed to copy staging buf into index buf");
         goto end;
     }
@@ -1272,40 +1472,326 @@ end:
 
 void vk_vertices_destroy(RenderContext *ctx) {
     vkDestroyBuffer(ctx->driver, ctx->vertex_buf, NULL);
-    vkFreeMemory(ctx->driver, ctx->vertex_memory, NULL);
+    vkFreeMemory(ctx->driver, ctx->vertex_mem, NULL);
     free(ctx->vertices);
 
     vkDestroyBuffer(ctx->driver, ctx->index_buf, NULL);
-    vkFreeMemory(ctx->driver, ctx->index_memory, NULL);
+    vkFreeMemory(ctx->driver, ctx->index_mem, NULL);
     free(ctx->indices);
 }
 
-bool vk_cmd_pool_create(RenderContext *ctx) {
-    VkCommandPoolCreateInfo create_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = ctx->queue_family_indices};
+/// transform image data to a layout more memory cache friendly to the GPU
+bool vk_image_layout_transition(RenderContext *ctx, VkImage img,
+                                VkImageLayout old_layout,
+                                VkImageLayout new_layout) {
 
-    return vkCreateCommandPool(
-        ctx->driver,
-        &create_info,
-        NULL,
-        &ctx->cmd_pool
-    ) == VK_SUCCESS;
-}
+    VkCommandBuffer cmd_buf;
+    VkPipelineStageFlags src_stage, dst_stage;
 
-bool vk_cmd_buffer_alloc(RenderContext *ctx) {
-    VkCommandBufferAllocateInfo alloc_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = ctx->cmd_pool,
-        .commandBufferCount = MAX_FRAMES_LOADED,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    VkImageMemoryBarrier barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = img,
+        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .subresourceRange.baseMipLevel = 0,
+        .subresourceRange.levelCount = 1,
+        .subresourceRange.baseArrayLayer = 0,
+        .subresourceRange.layerCount = 1,
     };
 
-    return vkAllocateCommandBuffers(
+    if (!vk_cmd_oneshot_start(ctx, &cmd_buf))
+        return false;
+
+    if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+        new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+
+    if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+        new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+
+    if (!src_stage || !dst_stage) {
+        error("unsupported layout transition");
+        return false;
+    }
+
+    // stages docs:
+    // https://registry.khronos.org/vulkan/specs/1.3-extensions/html/chap7.html#synchronization-access-types-supported
+    vkCmdPipelineBarrier(
+        cmd_buf,
+        src_stage, // stage before barrier
+        dst_stage, // stage after barrier
+        0,
+        0,
+        NULL,
+        0,
+        NULL,
+        1,
+        &barrier
+    );
+
+    if (!vk_cmd_oneshot_end(ctx, cmd_buf))
+        return false;
+
+    return true;
+}
+
+bool vk_image_texture_create(RenderContext *ctx,
+                             SDL_Surface *img,
+                             VkImage *img_text,
+                             VkDeviceMemory *img_text_mem) {
+    VkMemoryRequirements mem_reqs;
+
+    VkImageCreateInfo image_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .extent.depth = 1,
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .format = VK_FORMAT_B8G8R8A8_SRGB,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                 VK_IMAGE_USAGE_SAMPLED_BIT,
+        .extent.width = (u32)img->w,
+        .extent.height = (u32)img->h
+    };
+
+    VkMemoryAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+    };
+
+    if (vkCreateImage(ctx->driver, &image_info, NULL, img_text))
+        return false;
+
+    vkGetImageMemoryRequirements(ctx->driver, *img_text, &mem_reqs);
+
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex = vk_find_memory_type(
+        ctx,
+        mem_reqs,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+    );
+
+    if (vkAllocateMemory(ctx->driver, &alloc_info, NULL, img_text_mem)) {
+        error("failed to allocate image texture");
+        vkDestroyImage(ctx->driver, *img_text, NULL);
+        return false;
+    }
+
+    if (vkBindImageMemory(ctx->driver, *img_text, *img_text_mem, 0)) {
+        error("failed to bind image texture memory");
+        vkDestroyImage(ctx->driver, *img_text, NULL);
+        vkFreeMemory(ctx->driver, *img_text_mem, NULL);
+        return false;
+    }
+
+    return true;
+}
+
+bool vk_image_create(RenderContext *ctx, const char *path) {
+    VkDeviceSize img_size;
+    SDL_Surface *img;
+    VkImage img_text;
+    VkDeviceMemory staging_buf_mem;
+    VkBuffer staging_buf;
+    Image *copied_imgs;
+    void *data;
+    u8 *pixels;
+    bool success;
+
+    if (!(img = SDL_LoadBMP(path))) {
+        error("failed to load image: '%s'", path);
+        return false;
+    }
+
+    img_size = img->w * img->h * 4;
+    pixels = vmalloc(img_size);
+
+    if (img->format->BytesPerPixel == 3) {
+        u32 idx;
+        u8 *origin = img->pixels;
+
+        for (idx = 0; idx < img->w * img->h; idx += 3) {
+            pixels[idx * 4] = origin[idx * 3];
+            pixels[idx * 4 + 1] = origin[idx * 3 + 1];
+            pixels[idx * 4 + 2] = origin[idx * 3 + 2];
+            pixels[idx * 4 + 3] = 0;
+        }
+    }
+
+    if (img->format->BytesPerPixel == 4) {
+        memcpy(pixels, img->pixels, img_size);
+    }
+
+    success = vk_buffer_create(
+        ctx,
+        img_size,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        &staging_buf,
+        &staging_buf_mem
+    );
+
+    if (!success) {
+        SDL_FreeSurface(img);
+        error("failed to create image buffer");
+        return false;
+    }
+
+    if (vkMapMemory(ctx->driver, staging_buf_mem, 0, img_size, 0, &data)) {
+        error("failed to map vertex buffer memory");
+        SDL_FreeSurface(img);
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        return false;
+    }
+
+    memcpy(data, pixels, img_size);
+    vkUnmapMemory(ctx->driver, staging_buf_mem);
+    free(pixels);
+
+    /* ----- push image to array of images in RenderContext ---- */
+    ctx->image_count++;
+    copied_imgs = vmalloc(ctx->image_count * sizeof(Image));
+    memcpy(copied_imgs, ctx->images, ctx->image_count - 1);
+    free(ctx->images);
+    ctx->images = copied_imgs;
+    /* --------------------------------------------------------- */
+
+    success = vk_image_texture_create(
+        ctx,
+        img,
+        &ctx->images[ctx->image_count - 1].texture,
+        &ctx->images[ctx->image_count - 1].texture_mem
+    );
+
+    img_text = ctx->images[ctx->image_count - 1].texture;
+
+    if (!success) {
+        error("failed to create image texture");
+        SDL_FreeSurface(img);
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        return false;
+    }
+
+    // change layout from any undefined data to an optimized format
+    success = vk_image_layout_transition(
+        ctx,
+        img_text,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    );
+
+    if (!success) {
+        error("failed to transition image to optimal layout");
+        SDL_FreeSurface(img);
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        vkDestroyImage(ctx->driver, img_text, NULL);
+        return false;
+    }
+
+    if (!vk_buffer_copy_to_image(ctx, staging_buf, img_text, img->w, img->h)) {
+        error("failed to copy staging buffer into VkImage");
+        SDL_FreeSurface(img);
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        vkDestroyImage(ctx->driver, img_text, NULL);
+        return false;
+    }
+
+    SDL_FreeSurface(img);
+
+    success = vk_image_layout_transition(
+        ctx,
+        img_text,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    );
+
+    if (!success) {
+        error("failed to transition image to a optimal read-only layout");
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        vkDestroyImage(ctx->driver, img_text, NULL);
+        return false;
+    }
+
+    success = vk_image_view_create(
+        ctx,
+        img_text,
+        VK_FORMAT_B8G8R8A8_SRGB,
+        &ctx->images[ctx->image_count - 1].view
+    );
+
+    if (!success) {
+        error("failed to create image texture view");
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        vkDestroyImage(ctx->driver, img_text, NULL);
+        return false;
+    }
+
+    vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+    vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+
+    return true;
+}
+
+void vk_images_destroy(RenderContext *ctx) {
+    u32 idx;
+
+    for (idx = 0; idx < ctx->image_count; idx++) {
+        vkDestroyImageView(ctx->driver, ctx->images[idx].view, NULL);
+        vkDestroyImage(ctx->driver, ctx->images[idx].texture, NULL);
+        vkFreeMemory(ctx->driver, ctx->images[idx].texture_mem, NULL);
+    }
+
+    free(ctx->images);
+}
+
+bool vk_image_sampler_create(RenderContext *ctx) {
+    VkSamplerCreateInfo sampler_info = {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter = VK_FILTER_LINEAR,
+        .minFilter = VK_FILTER_LINEAR,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+        .anisotropyEnable = VK_TRUE,
+        .maxAnisotropy = ctx->dev_prop.limits.maxSamplerAnisotropy,
+        .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+        .unnormalizedCoordinates = VK_FALSE,
+        .compareEnable = VK_FALSE,
+        .compareOp = VK_COMPARE_OP_ALWAYS,
+        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .mipLodBias = 0.0,
+        .minLod = 0.0,
+        .maxLod = 0.0,
+    };
+
+    return vkCreateSampler(
         ctx->driver,
-        &alloc_info,
-        ctx->cmd_bufs
+        &sampler_info,
+        NULL,
+        &ctx->sampler
     ) == VK_SUCCESS;
 }
 
@@ -1370,7 +1856,7 @@ void vk_sync_primitives_destroy(RenderContext *ctx) {
 bool vk_record_cmd_buffer(RenderContext *ctx, u32 image_idx) {
     VkBuffer vertex_bufs[1] = { ctx->vertex_buf };
     VkDeviceSize offsets[1] = {0};
-    VkCommandBuffer cmd_buffer = ctx->cmd_bufs[ctx->frame];
+    VkCommandBuffer cmd_buf = ctx->cmd_bufs[ctx->frame];
 
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1390,40 +1876,52 @@ bool vk_record_cmd_buffer(RenderContext *ctx, u32 image_idx) {
         .clearValueCount = 1,
     };
 
-    if (vkBeginCommandBuffer(cmd_buffer, &begin_info))
+    if (vkBeginCommandBuffer(cmd_buf, &begin_info))
         return false;
 
     /* ------------------------ render pass ------------------------ */
-
     vkCmdBeginRenderPass(
-        cmd_buffer,
+        cmd_buf,
         &render_pass_info,
         VK_SUBPASS_CONTENTS_INLINE
     );
 
     vkCmdBindPipeline(
-        cmd_buffer,
+        cmd_buf,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
         ctx->pipeline
     );
 
     // setting necessary dynamic state
-    vkCmdSetViewport(cmd_buffer, 0, 1, &ctx->viewport);
-    vkCmdSetScissor(cmd_buffer, 0, 1, &ctx->scissor);
+    vkCmdSetViewport(cmd_buf, 0, 1, &ctx->viewport);
+    vkCmdSetScissor(cmd_buf, 0, 1, &ctx->scissor);
 
-    vkCmdBindVertexBuffers(cmd_buffer, 0, 1, vertex_bufs, offsets);
-    vkCmdBindIndexBuffer(cmd_buffer, ctx->index_buf, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindVertexBuffers(cmd_buf, 0, 1, vertex_bufs, offsets);
+    vkCmdBindIndexBuffer(cmd_buf, ctx->index_buf, 0, VK_INDEX_TYPE_UINT16);
 
-    vkCmdDrawIndexed(cmd_buffer, ctx->indices_count, 1, 0, 0, 0);
+    vkCmdBindDescriptorSets(
+        cmd_buf,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        ctx->pipeline_layout,
+        0,
+        1,
+        &ctx->desc_sets[ctx->frame],
+        0,
+        NULL
+    );
 
-    vkCmdEndRenderPass(cmd_buffer);
+    vkCmdDrawIndexed(cmd_buf, ctx->indices_count, 1, 0, 0, 0);
 
+    vkCmdEndRenderPass(cmd_buf);
     /* ------------------------------------------------------------- */
 
-    return vkEndCommandBuffer(cmd_buffer) == VK_SUCCESS;
+    return vkEndCommandBuffer(cmd_buf) == VK_SUCCESS;
 }
 
 void vk_engine_create(RenderContext *ctx) {
+    ctx->frame = 0;
+    ctx->image_count = 0;
+
     if (!vk_instance_create(ctx))
         panic("failed to create instance");
 
@@ -1433,11 +1931,14 @@ void vk_engine_create(RenderContext *ctx) {
     if (!vk_most_suitable_device_create(ctx))
         panic("failed to setup any GPU");
 
-    if (!vk_image_views_create(ctx))
+    if (!vk_swapchain_image_views_create(ctx))
         panic("failed to create image views");
 
     if (!vk_render_pass_create(ctx))
         panic("failed to create render pass");
+
+    if (!vk_descriptor_layouts_create(ctx))
+        panic("failed to create descriptor set layout");
 
     if (!vk_pipeline_create(ctx))
         panic("failed to create a pipeline");
@@ -1448,16 +1949,26 @@ void vk_engine_create(RenderContext *ctx) {
     if (!vk_cmd_pool_create(ctx))
         panic("failed to create command pool");
 
+    if (!vk_image_create(ctx, "./assets/image.bmp"))
+        panic("failed to create image");
+
+    if (!vk_image_sampler_create(ctx))
+        panic("failed to create image sampler");
+
     if (!vk_vertices_create(ctx))
         panic("failed to create vertex buffers");
 
-    if (!vk_cmd_buffer_alloc(ctx))
+    if (!vk_descriptor_pool_create(ctx))
+        panic("failed to create descriptor pool");
+
+    if (!vk_descriptor_sets_create(ctx))
+        panic("failed to create description sets");
+
+    if (!vk_cmd_buffers_alloc(ctx, ctx->cmd_bufs, MAX_FRAMES_LOADED))
         panic("failed to create command buffer");
 
     if (!vk_sync_primitives_create(ctx))
         panic("failed to create synchronization primitives");
-
-    ctx->frame = 0;
 
     info("vulkan engine created");
 }
@@ -1469,8 +1980,13 @@ void vk_engine_destroy(RenderContext *ctx) {
     vk_sync_primitives_destroy(ctx);
     vkDestroyCommandPool(ctx->driver, ctx->cmd_pool, NULL);
     vk_pipeline_destroy(ctx);
+
+    vk_descriptors_destroy(ctx);
+
     vkDestroyRenderPass(ctx->driver, ctx->render_pass, NULL);
     vk_swapchain_destroy(ctx);
+    vkDestroySampler(ctx->driver, ctx->sampler, NULL);
+    vk_images_destroy(ctx);
     vk_vertices_destroy(ctx);
     vkDestroyDevice(ctx->driver, NULL);
     vk_debugger_destroy(ctx);
@@ -1558,13 +2074,13 @@ void vk_engine_render(RenderContext* ctx) {
     vk_record_cmd_buffer(ctx, image_idx);
 
     if (vkQueueSubmit(ctx->queue, 1, &submit_info, sync->renderers_busy)) {
-        warn("failed to submit queue tasks");
+        error("failed to submit command buffer to queue");
         ctx->frame = (ctx->frame + 1) % MAX_FRAMES_LOADED;
         return;
     }
 
     if (vkQueuePresentKHR(ctx->queue, &present_info)) {
-        warn("failed to present queue");
+        error("failed to present queue");
         ctx->frame = (ctx->frame + 1) % MAX_FRAMES_LOADED;
         return;
     }

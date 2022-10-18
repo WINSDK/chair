@@ -4,7 +4,7 @@
 #include <vulkan/vulkan_core.h>
 #include <SDL2/SDL.h>
 
-#include "chair.h"
+#include "utils.h"
 
 #define MAX_FRAMES_LOADED 2
 
@@ -32,14 +32,14 @@ typedef struct {
     /* Images received from the swapchain */
     VkImage* images;
 
+    /* Number of images in the swapchain */
+    u32 image_count;
+
     /* View's into the swapchain's images */
     VkImageView *views;
 
     /* Collection of memory attachments used by the render pass */
     VkFramebuffer *framebuffers;
-
-    /* Number of images in the swapchain */
-    u32 image_count;
 } SwapChainDescriptor;
 
 typedef struct {
@@ -64,10 +64,21 @@ typedef struct {
     VkFence renderers_busy;
 } Synchronization;
 
-typedef struct {
+typedef struct Vertex {
     float pos[2];
-    float col[3];
-} Vertex;
+    float tex[2];
+} __attribute__ ((aligned (8))) Vertex;
+
+typedef struct {
+    /* Memory on the GPU that holds the `texture` */
+    VkDeviceMemory texture_mem;
+
+    /* Reference to the memory in `texture_memory` */
+    VkImage texture;
+
+    /* Additional metadata and resources references required by shaders */
+    VkImageView view;
+} Image;
 
 typedef struct {
     /* SDL application state */
@@ -146,7 +157,7 @@ typedef struct {
     u32 vertices_count;
 
     /* Memory on the GPU that holds the `vertices` */
-    VkDeviceMemory vertex_memory;
+    VkDeviceMemory vertex_mem;
 
     /* Reference to the memory in `vertex_memory` */
     VkBuffer vertex_buf;
@@ -158,7 +169,7 @@ typedef struct {
     u32 indices_count;
 
     /* Memory on the GPU that holds the `indices` */
-    VkDeviceMemory index_memory;
+    VkDeviceMemory index_mem;
 
     /* Reference to the memory in `indices_memory` */
     VkBuffer index_buf;
@@ -180,13 +191,36 @@ typedef struct {
 
     /* Details related to allocating memory on the GPU */
     VkPhysicalDeviceMemoryProperties mem_prop;
+
+    /* Details related to the GPU */
+    VkPhysicalDeviceProperties dev_prop;
+
+    /* Everything related to the textures for the game objects */
+    Image *images;
+
+    /* Number to images */
+    u32 image_count;
+
+    /* Method of reading images, applying filters and other transformations */
+    VkSampler sampler;
+
+    /* List of descriptor bindings */
+    VkDescriptorSet desc_sets[MAX_FRAMES_LOADED];
+
+    /* Reference to the different descriptor bindings */
+    VkDescriptorSetLayout desc_set_layout;
+
+    /* Pool from which descriptor sets are allocated */
+    VkDescriptorPool desc_pool;
 } RenderContext;
 
-void vk_engine_create(RenderContext *context);
-void vk_engine_destroy(RenderContext *context);
-void vk_engine_render(RenderContext *context);
+void vk_engine_create(RenderContext *ctx);
+void vk_engine_destroy(RenderContext *ctx);
+void vk_engine_render(RenderContext *ctx);
 
-void sdl_renderer_create(RenderContext *context);
-void sdl_renderer_destroy(RenderContext *context);
+void sdl_renderer_create(RenderContext *ctx);
+void sdl_renderer_destroy(RenderContext *ctx);
+
+void vertices_data_create(RenderContext *ctx);
 
 #endif // RENDER_H_
