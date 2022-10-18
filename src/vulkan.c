@@ -1623,6 +1623,7 @@ bool vk_image_create(RenderContext *ctx, const char *path) {
     img_size = img->w * img->h * 4;
     pixels = vmalloc(img_size);
 
+    // comvert RGB to RGBA
     if (img->format->BytesPerPixel == 3) {
         u32 idx;
         u8 *origin = img->pixels;
@@ -1635,6 +1636,7 @@ bool vk_image_create(RenderContext *ctx, const char *path) {
         }
     }
 
+    // don't bother converting in the case of RGBA
     if (img->format->BytesPerPixel == 4) {
         memcpy(pixels, img->pixels, img_size);
     }
