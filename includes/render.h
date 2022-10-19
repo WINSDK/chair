@@ -15,6 +15,15 @@
  * your main dedicated GPU for the actual graphics, but keep a VkDevice for the
  * integrated GPU to use to run some physics calculations or other data. */
 
+/* Data being sent to the vertex shader
+ *
+ * pos is in location 0
+ * tex is in location 1 */
+typedef struct Vertex {
+    float pos[2];
+    float tex[2];
+} __attribute__ ((aligned (8))) Vertex;
+
 typedef struct {
     /* Interface to send images to the screen.
      * List of images, accessible by the operating system for display */
@@ -64,21 +73,51 @@ typedef struct {
     VkFence renderers_busy;
 } Synchronization;
 
-typedef struct Vertex {
-    float pos[2];
-    float tex[2];
-} __attribute__ ((aligned (8))) Vertex;
-
 typedef struct {
     /* Memory on the GPU that holds the `texture` */
-    VkDeviceMemory texture_mem;
+    VkDeviceMemory mem;
 
     /* Reference to the memory in `texture_memory` */
-    VkImage texture;
+    VkImage image;
 
     /* Additional metadata and resources references required by shaders */
     VkImageView view;
-} Image;
+
+    /* Descriptor bindings for every frame */
+    VkDescriptorSet desc_sets[MAX_FRAMES_LOADED];
+} Texture;
+
+/* Objects could be stored in a linked list.
+ * However as every member of Object and it's members are just pointers
+ * I feel like the cost of copying over the struct on appends isn't too bad */
+typedef struct {
+    /* Vertices of the object to be renderer */
+    Vertex *vertices;
+
+    /* Number of vertices to be renderer */
+    u32 vertices_count;
+
+    /* Memory on the GPU that holds the `vertices` */
+    VkDeviceMemory vertices_mem;
+
+    /* Reference to the memory in `vertex_memory` */
+    VkBuffer vertices_buf;
+
+    /* Offsets into `vertices` */
+    u16 *indices;
+
+    /* Indices into `vertices` on what vertices to draw */
+    u32 indices_count;
+
+    /* Memory on the GPU that holds the `indices` */
+    VkDeviceMemory indices_mem;
+
+    /* Reference to the memory in `indices_memory` */
+    VkBuffer indices_buf;
+
+    /* Everything related to the object's texture */
+    Texture texture;
+} Object;
 
 typedef struct {
     /* SDL application state */
@@ -150,30 +189,6 @@ typedef struct {
     /* Vertex shader code with an entry points */
     VkShaderModule vert;
 
-    /* Vertices of an object to be renderer */
-    Vertex *vertices;
-
-    /* Number of vertices to be renderer */
-    u32 vertices_count;
-
-    /* Memory on the GPU that holds the `vertices` */
-    VkDeviceMemory vertex_mem;
-
-    /* Reference to the memory in `vertex_memory` */
-    VkBuffer vertex_buf;
-
-    /* Offsets into `vertices` */
-    u16 *indices;
-
-    /* Number of vertices for the vertices */
-    u32 indices_count;
-
-    /* Memory on the GPU that holds the `indices` */
-    VkDeviceMemory index_mem;
-
-    /* Reference to the memory in `indices_memory` */
-    VkBuffer index_buf;
-
     /* Fragment shader code with an entry points */
     VkShaderModule frag;
 
@@ -195,32 +210,39 @@ typedef struct {
     /* Details related to the GPU */
     VkPhysicalDeviceProperties dev_prop;
 
-    /* Everything related to the textures for the game objects */
-    Image *images;
-
-    /* Number to images */
-    u32 image_count;
-
     /* Method of reading images, applying filters and other transformations */
     VkSampler sampler;
 
-    /* List of descriptor bindings */
-    VkDescriptorSet desc_sets[MAX_FRAMES_LOADED];
-
-    /* Reference to the different descriptor bindings */
+    /* Description on how a VkDescriptorSet should be created */
     VkDescriptorSetLayout desc_set_layout;
 
     /* Pool from which descriptor sets are allocated */
     VkDescriptorPool desc_pool;
+
+    /* Entities in the game to be rendered */
+    Object *objects;
+
+    /* Number of entities to be rendered */
+    u32 object_count;
+
+    /* Number of entities allocated in `objects` */
+    u32 object_alloc_count;
 } RenderContext;
 
 void vk_engine_create(RenderContext *ctx);
 void vk_engine_destroy(RenderContext *ctx);
 void vk_engine_render(RenderContext *ctx);
 
+bool vk_vertices_indices_create(RenderContext *ctx, Object *obj);
+bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path);
+bool vk_descriptor_sets_create(RenderContext *ctx, Texture *tex);
+
 void sdl_renderer_create(RenderContext *ctx);
 void sdl_renderer_destroy(RenderContext *ctx);
 
-void vertices_data_create(RenderContext *ctx);
+void convert_pos_to_aspect_ratio(float pos[4][2]);
+
+bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path);
+void objects_destroy(RenderContext *ctx);
 
 #endif // RENDER_H_

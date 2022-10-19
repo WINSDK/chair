@@ -43,102 +43,119 @@ void sdl_renderer_destroy(RenderContext *ctx) {
     info("SDL2 destroyed");
 }
 
-// NOTE: !!!!!!!!!!!!!!!!
+// converts position to 16:9
+void convert_pos_to_aspect_ratio(float pos[4][2]) {
+    for (u32 idx = 0; idx < 4; idx++) {
+        pos[idx][0] *= 9.0 / 16;
+        pos[idx][1] *= 16.0 / 9;
+    }
+}
+
+Object *object_alloc(RenderContext *ctx) {
+    // initially allocate 4 objects
+    if (ctx->object_alloc_count == 0) {
+        ctx->objects = vmalloc(4 * sizeof(Object));
+        ctx->object_alloc_count = 3;
+        ctx->object_count = 1;
+
+        return &ctx->objects[0];
+    }
+
+    ctx->object_count++;
+
+    // if memory for a new object exists, use it
+    if (ctx->object_count < ctx->object_alloc_count)
+        return &ctx->objects[ctx->object_count - 1];
+
+    // if there isn't enough space, allocate twice as much and copy over objects
+    ctx->object_alloc_count *= 2;
+    ctx->objects = vrealloc(ctx->objects, ctx->object_alloc_count);
+
+    return &ctx->objects[ctx->object_count - 1];
+}
+
+// appends object to list of objects
 //
-// the overlay order on objects is determined by who comes last in the indices
-// array, therefore to overlay one object over the other only required having
-// it be later in the indices array.
-void vertices_data_create(RenderContext *ctx) {
-    float x = -1.0;
-    float y = -1.0;
-    float x_inc = 2.0 / 16.0;
-    float y_inc = 2.0 / 9.0;
-    u32 grid_size = 13 * 9;
-    u16 idx = 0;
+// pos is an array of positions:
+// [top-left, top-right, bottom-right, bottom-left]
+//
+// img_path is the texture to be overlayed on the object
+bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path) {
+    Object *obj = object_alloc(ctx);
 
     /* --------------------- assign vertices --------------------- */
+    obj->vertices_count = 4;
+    obj->vertices = vmalloc(obj->vertices_count * sizeof(Vertex));
 
-    ctx->vertices_count = 4;
-    ctx->vertices = vmalloc(ctx->vertices_count * sizeof(Vertex));
+    obj->vertices[0].pos[0] = pos[0][0];
+    obj->vertices[0].pos[1] = pos[0][1];
+    obj->vertices[0].tex[0] = 0.0;
+    obj->vertices[0].tex[1] = 0.0;
 
-    ctx->vertices[0].pos[0] = -0.5;
-    ctx->vertices[0].pos[1] = -0.5;
-    ctx->vertices[0].tex[0] = 1.0;
-    ctx->vertices[0].tex[1] = 0.0;
+    obj->vertices[1].pos[0] = pos[1][0];
+    obj->vertices[1].pos[1] = pos[1][1];
+    obj->vertices[1].tex[0] = 1.0;
+    obj->vertices[1].tex[1] = 0.0;
 
-    ctx->vertices[1].pos[0] = 0.5;
-    ctx->vertices[1].pos[1] = -0.5;
-    ctx->vertices[1].tex[0] = 0.0;
-    ctx->vertices[1].tex[1] = 0.0;
+    obj->vertices[2].pos[0] = pos[2][0];
+    obj->vertices[2].pos[1] = pos[2][1];
+    obj->vertices[2].tex[0] = 1.0;
+    obj->vertices[2].tex[1] = 1.0;
 
-    ctx->vertices[2].pos[0] = 0.5;
-    ctx->vertices[2].pos[1] = 0.5;
-    ctx->vertices[2].tex[0] = 0.0;
-    ctx->vertices[2].tex[1] = 1.0;
-
-    ctx->vertices[3].pos[0] = -0.5;
-    ctx->vertices[3].pos[1] = 0.5;
-    ctx->vertices[3].tex[0] = 1.0;
-    ctx->vertices[3].tex[1] = 1.0;
-
-    //ctx->vertices_count = 4 * grid_size;
-
-    //ctx->vertices = vmalloc(ctx->vertices_count * sizeof(Vertex));
-
-    //// create a 13x9 grid made out of 0.25x0.25 sized square's.
-    //for (y = 0; y < 9; y++) {
-    //    for (x = 3; x < 16; x++) {
-    //        ctx->vertices[idx + 0].pos[0] = x_inc * x - 1.0;
-    //        ctx->vertices[idx + 0].pos[1] = y_inc * y - 1.0;
-    //        ctx->vertices[idx + 0].tex[0] = 1.0;
-    //        ctx->vertices[idx + 0].tex[1] = 0.0;
-
-    //        ctx->vertices[idx + 1].pos[0] = x_inc * x - 1.0 + x_inc;
-    //        ctx->vertices[idx + 1].pos[1] = y_inc * y - 1.0;
-    //        ctx->vertices[idx + 0].tex[0] = 0.0;
-    //        ctx->vertices[idx + 0].tex[1] = 0.0;
-
-    //        ctx->vertices[idx + 2].pos[0] = x_inc * x - 1.0 + x_inc;
-    //        ctx->vertices[idx + 2].pos[1] = y_inc * y - 1.0 + y_inc;
-    //        ctx->vertices[idx + 0].tex[0] = 0.0;
-    //        ctx->vertices[idx + 0].tex[1] = 1.0;
-
-    //        ctx->vertices[idx + 3].pos[0] = x_inc * x - 1.0;
-    //        ctx->vertices[idx + 3].pos[1] = y_inc * y - 1.0 + y_inc;
-    //        ctx->vertices[idx + 0].tex[0] = 1.0;
-    //        ctx->vertices[idx + 0].tex[1] = 1.0;
-
-    //        idx += 4;
-    //    }
-    //}
+    obj->vertices[3].pos[0] = pos[3][0];
+    obj->vertices[3].pos[1] = pos[3][1];
+    obj->vertices[3].tex[0] = 0.0;
+    obj->vertices[3].tex[1] = 1.0;
 
     /* --------------------- assign indices--------------------- */
-    ctx->indices_count = 6;
-    ctx->indices = vmalloc(ctx->indices_count * sizeof(u16));
+    obj->indices_count = 6;
+    obj->indices = vmalloc(obj->indices_count * sizeof(u16));
 
-    ctx->indices[0]=  0;
-    ctx->indices[1]=  1;
-    ctx->indices[2]=  2;
-    ctx->indices[3]=  2;
-    ctx->indices[4]=  3;
-    ctx->indices[5]=  0;
-    //ctx->indices_count = 6 * grid_size;
+    obj->indices[0] = 0;
+    obj->indices[1] = 1;
+    obj->indices[2] = 2;
+    obj->indices[3] = 2;
+    obj->indices[4] = 3;
+    obj->indices[5] = 0;
 
-    //ctx->indices = vmalloc(ctx->indices_count * sizeof(u16));
+    if (!vk_vertices_indices_create(ctx, obj)) {
+        error("failed to create vulkan internal vertices and indices");
+        return false;
+    }
 
-    //// for each square set the indices to the next 4 vertices
-    ////
-    //// the base indices are [0, 1, 2, 2, 3, 0] so each other square
-    //// will use the same indices but with the offset of it's index
-    //for (idx = 0; idx < grid_size; idx++) {
-    //    u16 off_ind = idx * 4;
-    //    u16 off_idx = idx * 6;
+    if (!vk_image_create(ctx, &obj->texture, img_path)) {
+        error("failed to create image");
+        return false;
+    }
 
-    //    ctx->indices[off_idx + 0] = off_ind + 0;
-    //    ctx->indices[off_idx + 1] = off_ind + 1;
-    //    ctx->indices[off_idx + 2] = off_ind + 2;
-    //    ctx->indices[off_idx + 3] = off_ind + 2;
-    //    ctx->indices[off_idx + 4] = off_ind + 3;
-    //    ctx->indices[off_idx + 5] = off_ind + 0;
-    //}
+    if (!vk_descriptor_sets_create(ctx, &obj->texture)) {
+        error("failed to create descriptor sets");
+        return false;
+    }
+
+    return true;
+};
+
+// destroys all objects at once
+void objects_destroy(RenderContext *ctx) {
+    for (u32 idx = 0; idx < ctx->object_count; idx++) {
+        Object *obj = &ctx->objects[idx];
+
+        // destroy vertices
+        free(obj->vertices);
+        vkFreeMemory(ctx->driver, obj->vertices_mem, NULL);
+        vkDestroyBuffer(ctx->driver, obj->vertices_buf, NULL);
+
+        // destroy indices
+        free(obj->indices);
+        vkFreeMemory(ctx->driver, obj->indices_mem, NULL);
+        vkDestroyBuffer(ctx->driver, obj->indices_buf, NULL);
+
+        // destroy texture
+        vkDestroyImageView(ctx->driver, obj->texture.view, NULL);
+        vkDestroyImage(ctx->driver, obj->texture.image, NULL);
+        vkFreeMemory(ctx->driver, obj->texture.mem, NULL);
+    }
+
+    free(ctx->objects);
 }

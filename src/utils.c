@@ -18,26 +18,55 @@ void set_log_level(LogLevel level) {
     atomic_store(&LEVEL, level);
 }
 
-void trace(const char *format, ...) {
-    if (get_log_level() < LOG_TRACE)
+void __logger(LogLevel lvl, const char *fmt, ...) {
+    FILE *output = stdout;
+    va_list ap;
+
+    if (get_log_level() < lvl)
         return;
 
-    va_list ap;
-    va_start(ap, format);
-    printf("\x1b[1;38;5;4m[i]\e[m ");
-    vprintf(format, ap);
-    putchar('\n');
-    fflush(stdout);
+    va_start(ap, fmt);
+
+    if (lvl <= LOG_ERROR)
+        output = stderr;
+
+    switch(lvl) {
+    case LOG_TRACE:
+        fprintf(output, "\x1b[1;38;5;4m");
+        break;
+    case LOG_INFO:
+        fprintf(output, "\x1b[1;38;5;2m");
+        break;
+    case LOG_WARN:
+        fprintf(output, "\x1b[1;38;5;3m");
+        break;
+    case LOG_ERROR:
+        fprintf(output, "\x1b[1;38;5;1m");
+        break;
+    case LOG_PANIC:
+        fprintf(output, "\x1b[1;38;5;1m");
+        break;
+    }
+
+    vfprintf(output, fmt, ap);
+    fputc('\n', output);
     va_end(ap);
+
+    if (lvl == LOG_PANIC) {
+        if (get_log_level() == LOG_TRACE)
+            __asm__("int3");
+
+        exit(1);
+    }
 }
 
-void trace_array(const char **msgs, u32 len, const char *format, ...) {
+void __array(const char **msgs, u32 len, const char *format, ...) {
     if (get_log_level() < LOG_TRACE)
         return;
 
     va_list ap;
     va_start(ap, format);
-    printf("\x1b[1;38;5;4m[i]\e[m ");
+    printf("\x1b[1;38;5;4m");
     vprintf(format, ap);
 
     printf("[");
@@ -56,58 +85,8 @@ void trace_array(const char **msgs, u32 len, const char *format, ...) {
             printf("%s, ", msgs[idx]);
     }
 
-    putchar('\n');
-    fflush(stdout);
+    fputc('\n', stdout);
     va_end(ap);
-}
-
-void info(const char *format, ...) {
-    if (get_log_level() < LOG_INFO)
-        return;
-
-    va_list ap;
-    va_start(ap, format);
-    printf("\x1b[1;38;5;2m[?]\e[m ");
-    vprintf(format, ap);
-    putchar('\n');
-    fflush(stdout);
-    va_end(ap);
-}
-
-void warn(const char *format, ...) {
-    if (get_log_level() < LOG_WARN)
-        return;
-
-    va_list ap;
-    va_start(ap, format);
-    printf("\x1b[1;38;5;3m[!]\e[m ");
-    vprintf(format, ap);
-    putchar('\n');
-    fflush(stdout);
-    va_end(ap);
-}
-
-void error(const char *format, ...) {
-    va_list ap;
-    va_start(ap, format);
-    printf("\x1b[1;38;5;1m[-]\e[m ");
-    vprintf(format, ap);
-    putchar('\n');
-    fflush(stdout);
-    va_end(ap);
-}
-
-noreturn void panic(const char *format, ...) {
-    va_list ap;
-    va_start(ap, format);
-    fprintf(stderr, "\x1b[1;38;5;1m[-]\e[m thread panicked with: `");
-    vfprintf(stderr, format, ap);
-    fprintf(stderr, "`\n");
-    fflush(stderr);
-    va_end(ap);
-
-    __asm__("int3");
-    exit(1);
 }
 
 void *vmalloc(usize size) {
@@ -119,9 +98,27 @@ void *vmalloc(usize size) {
     return data;
 }
 
-#define CLOCK_REALTIME 0
-#define CLOCK_PROCESS_CPUTIME_ID 2
-#define CLOCK_THREAD_CPUTIME_ID 3
+void *vrealloc(void *ptr, usize size) {
+    void *data = realloc(ptr, size);
+
+    if (data == NULL)
+        panic("failed to reallocate 0x%x bytes", size);
+
+    return data;
+}
+
+// Force `val` to be between `min` and `max`.
+u32 clamp(u32 val, u32 min, u32 max) {
+    if (val < min) {
+        return min;
+    }
+
+    if (val > max) {
+        return max;
+    }
+
+    return val;
+}
 
 struct timespec now() {
     struct timespec time;
@@ -136,7 +133,7 @@ struct timespec now() {
 }
 
 struct timespec time_elapsed(struct timespec start) {
-    struct timespec temp, time;
+    struct timespec diff, time;
 
 #ifdef __linux__
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time);
@@ -144,35 +141,34 @@ struct timespec time_elapsed(struct timespec start) {
     timespec_get(&time, TIME_UTC);
 #endif
 
+    // calculate the difference between `start` and now
     if ((time.tv_nsec - start.tv_nsec) < 0) {
-        temp.tv_sec = time.tv_sec - start.tv_sec - 1;
-        temp.tv_nsec = 1000000000 + time.tv_nsec - start.tv_nsec;
+        diff.tv_sec = time.tv_sec - start.tv_sec - 1;
+        diff.tv_nsec = 1000000000 + time.tv_nsec - start.tv_nsec;
     } else {
-        temp.tv_sec = time.tv_sec - start.tv_sec;
-        temp.tv_nsec = time.tv_nsec - start.tv_nsec;
+        diff.tv_sec = time.tv_sec - start.tv_sec;
+        diff.tv_nsec = time.tv_nsec - start.tv_nsec;
     }
 
-    return temp;
+    return diff;
 }
 
 /// Reads file and returns NULL if it failed
 char *read_binary(const char *path, u32 *bytes_read) {
-    FILE *file = fopen(path, "rb");
+    FILE *fh = fopen(path, "rb");
 
-    if (file == NULL)
+    if (fh == NULL)
         return NULL;
 
-    fseek(file, 0, SEEK_END);
-    size_t size = ftell(file);
-    rewind(file);
+    // read file length
+    fseek(fh, 0, SEEK_END);
+    size_t size = ftell(fh);
+    rewind(fh);
 
-    char *bytes = malloc(size);
-    *bytes_read = fread(bytes, 1, size, file);
+    char *bytes = vmalloc(size);
+    *bytes_read = fread(bytes, 1, size, fh);
 
-    if (bytes == NULL)
-        return NULL;
-
-    fclose(file);
+    fclose(fh);
 
     if (*bytes_read != size) {
         free(bytes);
