@@ -247,20 +247,20 @@ vk_debug_handler(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT &&
         get_log_level() >= LOG_INFO) {
 
-        printf("\x1b[1;38;5;2m[v]\e[m %s\n", callback_data->pMessage);
+        printf("\x1b[1;38;5;2m[vulkan]\e[m %s\n", callback_data->pMessage);
         return VK_FALSE;
     }
 
     if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT &&
         get_log_level() >= LOG_WARN) {
 
-        printf("\x1b[1;38;5;3m[v]\e[m %s\n", callback_data->pMessage);
+        printf("\x1b[1;38;5;3m[vulkan]\e[m %s\n", callback_data->pMessage);
         return VK_FALSE;
     }
 
     if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT ||
         severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-        printf("\x1b[1;38;5;1m[v]\e[m %s\n", callback_data->pMessage);
+        printf("\x1b[1;38;5;1m[vulkan]\e[m %s\n", callback_data->pMessage);
 
         if (get_log_level() == LOG_TRACE)
             __asm__("int3");

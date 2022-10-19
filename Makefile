@@ -1,4 +1,4 @@
-CC = clang
+CC = gcc
 
 LDFLAGS = -flto=thin
 CFLAGS  = -std=c11 -fwrapv \
@@ -8,7 +8,7 @@ CFLAGS  = -std=c11 -fwrapv \
 		  -Wall \
 		  -Wfloat-equal \
 		  -Wstring-compare \
-		  -Wuninitialized \
+		  -Wuninitialized
 
 CFLAGS += `pkg-config --cflags vulkan` \
 		  `pkg-config --cflags sdl2`
@@ -68,7 +68,7 @@ target/debug/main: target/debug $(DEB_OBJS) $(SHADERS)
 	$(CC) $(LDFLAGS) $(DEB_OBJS) -o $@
 
 target/release/main: target/release $(REL_OBJS) $(SHADERS)
-	$(CC) $(LDFLAGS) $(REL_OBJS) -o $@
+	$(CC) $(REL_OBJS) $(LDFLAGS) -o $@
 	strip --strip-all $@
 
 target/sanitize/%.o: src/%.c
