@@ -85,6 +85,9 @@ typedef struct {
 
     /* Descriptor bindings for every frame */
     VkDescriptorSet desc_sets[MAX_FRAMES_LOADED];
+
+    /* Method of reading images, applying filters and other transformations */
+    VkSampler sampler;
 } Texture;
 
 /* Objects could be stored in a linked list.
@@ -210,9 +213,6 @@ typedef struct {
     /* Details related to the GPU */
     VkPhysicalDeviceProperties dev_prop;
 
-    /* Method of reading images, applying filters and other transformations */
-    VkSampler sampler;
-
     /* Description on how a VkDescriptorSet should be created */
     VkDescriptorSetLayout desc_set_layout;
 
@@ -235,12 +235,13 @@ void vk_engine_render(RenderContext *ctx);
 
 bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path);
 bool vk_descriptor_sets_create(RenderContext *ctx, Texture *tex);
-bool vk_vertices_indices_copy(RenderContext *ctx, Object *obj);
+bool vk_image_sampler_create(RenderContext *ctx, Texture *tex);
+
+bool vk_vertices_copy(RenderContext *ctx, Object *obj);
+bool vk_indices_copy(RenderContext *ctx, Object *obj);
 
 void sdl_renderer_create(RenderContext *ctx);
 void sdl_renderer_destroy(RenderContext *ctx);
-
-void convert_pos_to_aspect_ratio(float pos[4][2]);
 
 bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path);
 void object_transform(Object *obj, float x, float y);

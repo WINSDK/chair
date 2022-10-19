@@ -8,7 +8,7 @@
 
 #include "utils.h"
 
-static atomic_uint LEVEL = LOG_WARN;
+static atomic_uint LEVEL = LOG_TRACE;
 
 LogLevel get_log_level() {
     return atomic_load(&LEVEL);

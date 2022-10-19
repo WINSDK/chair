@@ -19,12 +19,12 @@ void event_loop(RenderContext *ctx) {
             break;
 
         if (board[SDL_SCANCODE_W]) {
-            object_transform(&ctx->objects[1], 0.0, -0.003);
+            object_transform(&ctx->objects[1], 0.0, -0.004);
             vert_update_required = true;
         }
 
         if (board[SDL_SCANCODE_S]) {
-            object_transform(&ctx->objects[1], 0.0, 0.003);
+            object_transform(&ctx->objects[1], 0.0, 0.004);
             vert_update_required = true;
         }
 
@@ -39,7 +39,9 @@ void event_loop(RenderContext *ctx) {
         }
 
         if (vert_update_required) {
-            vk_vertices_indices_copy(ctx, &ctx->objects[1]);
+            if (!vk_vertices_copy(ctx, &ctx->objects[1]))
+                warn("failed to copy vertices");
+
             vert_update_required = false;
         }
 

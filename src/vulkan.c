@@ -1114,7 +1114,7 @@ bool vk_descriptor_sets_create(RenderContext *ctx, Texture *tex) {
 
     VkDescriptorImageInfo image_info = {
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        .sampler = ctx->sampler,
+        .sampler = tex->sampler,
         .imageView = tex->view
     };
 
@@ -1341,14 +1341,13 @@ bool vk_buffer_copy_to_image(RenderContext *ctx, VkBuffer buf, VkImage img,
     return true;
 }
 
-bool vk_vertices_indices_copy(RenderContext *ctx, Object *obj) {
+bool vk_vertices_copy(RenderContext *ctx, Object *obj) {
     void *data;
     VkDeviceSize buf_size;
     VkBuffer staging_buf;
     VkDeviceMemory staging_buf_mem;
     bool success;
 
-    /* -------------------initialize vertex buffers ------------------ */
     buf_size = sizeof(Vertex) * obj->vertices_count;
 
     success = vk_buffer_create(
@@ -1387,18 +1386,31 @@ bool vk_vertices_indices_copy(RenderContext *ctx, Object *obj) {
 
     if (!success) {
         error("failed to create vertex buffer");
-        goto end;
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        return false;
     }
 
     if (!vk_buffer_copy(ctx, obj->vertices_buf, staging_buf, buf_size)) {
         error("failed to copy staging buf into vertex buf");
-        goto end;
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        return false;
     }
 
     vkDestroyBuffer(ctx->driver, staging_buf, NULL);
     vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
 
-    /* -------------------initialize index buffers ------------------ */
+    return true;
+}
+
+bool vk_indices_copy(RenderContext *ctx, Object *obj) {
+    void *data;
+    VkDeviceSize buf_size;
+    VkBuffer staging_buf;
+    VkDeviceMemory staging_buf_mem;
+    bool success;
+
     buf_size = sizeof(u16) * obj->indices_count;
 
     success = vk_buffer_create(
@@ -1437,23 +1449,20 @@ bool vk_vertices_indices_copy(RenderContext *ctx, Object *obj) {
 
     if (!success) {
         error("failed to create index buffer");
-        goto end;
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
     }
 
     if (!vk_buffer_copy(ctx, obj->indices_buf, staging_buf, buf_size)) {
         error("failed to copy staging buf into index buf");
-        goto end;
+        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
     }
 
     vkDestroyBuffer(ctx->driver, staging_buf, NULL);
     vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
 
     return true;
-
-end:
-    vkDestroyBuffer(ctx->driver, staging_buf, NULL);
-    vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
-    return false;
 }
 
 /// transform image data to a layout more memory cache friendly to the GPU
@@ -1717,7 +1726,7 @@ bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path) {
     return true;
 }
 
-bool vk_image_sampler_create(RenderContext *ctx) {
+bool vk_image_sampler_create(RenderContext *ctx, Texture *tex) {
     VkSamplerCreateInfo sampler_info = {
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .magFilter = VK_FILTER_LINEAR,
@@ -1741,7 +1750,7 @@ bool vk_image_sampler_create(RenderContext *ctx) {
         ctx->driver,
         &sampler_info,
         NULL,
-        &ctx->sampler
+        &tex->sampler
     ) == VK_SUCCESS;
 }
 
@@ -1812,9 +1821,12 @@ void vk_engine_create(RenderContext *ctx) {
     ctx->object_alloc_count = 0;
 
     float back[4][2] = { {-1.0, -1.0}, {1.0, -1.0}, {1.0, 1.0}, {-1.0, 1.0} };
-    float guy[4][2] = { {-2.0/9.0, -0.125}, {2.0/9.0, -0.125}, {2.0/9.0, 0.125}, {-2.0/9.0, 0.125} };
-
-    convert_pos_to_aspect_ratio(guy);
+    float guy[4][2] = {
+        { -2.0/16.0, -2.0/9.0 },
+        { 2.0/16.0, -2.0/9.0  },
+        { 2.0/16.0, 2.0/9.0   },
+        { -2.0/16.0, 2.0/9.0  }
+    };
 
     if (!vk_instance_create(ctx))
         panic("failed to create instance");
@@ -1843,9 +1855,6 @@ void vk_engine_create(RenderContext *ctx) {
     if (!vk_cmd_pool_create(ctx))
         panic("failed to create command pool");
 
-    if (!vk_image_sampler_create(ctx))
-        panic("failed to create image sampler");
-
     if (!vk_descriptor_pool_create(ctx))
         panic("failed to create descriptor pool");
 
@@ -1857,6 +1866,9 @@ void vk_engine_create(RenderContext *ctx) {
 
     if (!object_create(ctx, back, "./assets/room_base.bmp"))
         panic("failed to create object");
+
+    //if (!object_create(ctx, back, "./assets/escape_menu.bmp"))
+    //    panic("failed to create object");
 
     if (!object_create(ctx, guy, "./assets/guy.bmp"))
         panic("failed to create object");
@@ -1878,7 +1890,6 @@ void vk_engine_destroy(RenderContext *ctx) {
     vkDestroyDescriptorSetLayout(ctx->driver, ctx->desc_set_layout, NULL);
     vkDestroyRenderPass(ctx->driver, ctx->render_pass, NULL);
     vk_swapchain_destroy(ctx);
-    vkDestroySampler(ctx->driver, ctx->sampler, NULL);
     vkDestroyDevice(ctx->driver, NULL);
     DestroyDebugUtilsMessengerEXT(ctx->instance, ctx->messenger, NULL);
     vkDestroySurfaceKHR(ctx->instance, ctx->surface, NULL);

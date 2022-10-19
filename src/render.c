@@ -4,15 +4,15 @@ void sdl_renderer_create(RenderContext *ctx) {
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
     SDL_Init(SDL_INIT_VIDEO);
 
-    SDL_DisplayMode displayInfo;
-    SDL_GetCurrentDisplayMode(0, &displayInfo);
+    SDL_DisplayMode display_info;
+    SDL_GetCurrentDisplayMode(0, &display_info);
 
     ctx->window = SDL_CreateWindow(
         "Deep Down Bad",
         SDL_WINDOWPOS_UNDEFINED,
         SDL_WINDOWPOS_UNDEFINED,
-        displayInfo.w * 2 / 3,
-        displayInfo.h * 2 / 3,
+        display_info.w * 2 / 3,
+        display_info.h * 2 / 3,
         SDL_WINDOW_VULKAN | SDL_WINDOW_ALLOW_HIGHDPI
     );
 
@@ -24,8 +24,8 @@ void sdl_renderer_create(RenderContext *ctx) {
 
     info(
         "created window with size: %ix%i",
-        displayInfo.w * 2 / 3,
-        displayInfo.h * 2 / 3
+        display_info.w * 2 / 3,
+        display_info.h * 2 / 3
     );
 
     SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
@@ -43,20 +43,11 @@ void sdl_renderer_destroy(RenderContext *ctx) {
     info("SDL2 destroyed");
 }
 
-
-// converts position to 16:9 (remove this stupid function tmrw pls)
-void convert_pos_to_aspect_ratio(float pos[4][2]) {
-    for (u32 idx = 0; idx < 4; idx++) {
-        pos[idx][0] *= 9.0 / 16;
-        pos[idx][1] *= 16.0 / 9;
-    }
-}
-
 Object *object_alloc(RenderContext *ctx) {
     // initially allocate 4 objects
     if (ctx->object_alloc_count == 0) {
         ctx->objects = vmalloc(4 * sizeof(Object));
-        ctx->object_alloc_count = 3;
+        ctx->object_alloc_count = 4;
         ctx->object_count = 1;
 
         return &ctx->objects[0];
@@ -119,8 +110,13 @@ bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path) {
     obj->indices[4] = 3;
     obj->indices[5] = 0;
 
-    if (!vk_vertices_indices_copy(ctx, obj)) {
-        error("failed to create vulkan internal vertices and indices");
+    if (!vk_vertices_copy(ctx, obj)) {
+        error("failed to copy to GPU vertices buffer");
+        return false;
+    }
+
+    if (!vk_indices_copy(ctx, obj)) {
+        error("failed to copy to GPU indices buffer");
         return false;
     }
 
@@ -128,6 +124,9 @@ bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path) {
         error("failed to create image");
         return false;
     }
+
+    if (!vk_image_sampler_create(ctx, &obj->texture))
+        panic("failed to create image sampler");
 
     if (!vk_descriptor_sets_create(ctx, &obj->texture)) {
         error("failed to create descriptor sets");
@@ -164,7 +163,9 @@ void objects_destroy(RenderContext *ctx) {
         vkDestroyImageView(ctx->driver, obj->texture.view, NULL);
         vkDestroyImage(ctx->driver, obj->texture.image, NULL);
         vkFreeMemory(ctx->driver, obj->texture.mem, NULL);
+        vkDestroySampler(ctx->driver, obj->texture.sampler, NULL);
     }
 
     free(ctx->objects);
+    info("game entities destroyed");
 }

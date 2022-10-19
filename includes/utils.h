@@ -48,22 +48,22 @@ void __array(const char **msgs, u32 len, const char *format, ...);
  *
  * "[] %d", 100 */
 
-#define trace(fmt, ...)                                          \
-    __logger(                                                    \
-        LOG_TRACE,                                               \
-        "[%s:%d]\x1B[0m " fmt, __FILE__, __LINE__, ##__VA_ARGS__ \
+#define trace(fmt, ...)                                           \
+    __logger(                                                     \
+        LOG_TRACE,                                                \
+        "[%s:%d]\x1B[0m " fmt, __FILE__, __LINE__, ##__VA_ARGS__  \
     )
 
-#define info(fmt, ...)                                           \
-    __logger(                                                    \
-        LOG_INFO,                                                \
-        "[%s:%d]\x1B[0m " fmt, __FILE__, __LINE__, ##__VA_ARGS__ \
+#define info(fmt, ...)                                            \
+    __logger(                                                     \
+        LOG_INFO,                                                 \
+        "[%s:%d]\x1B[0m " fmt, __FILE__, __LINE__, ##__VA_ARGS__  \
     )
 
-#define warn(fmt, ...)                                           \
-    __logger(                                                    \
-        LOG_WARN,                                                \
-        "[%s:%d]\x1B[0m " fmt, __FILE__, __LINE__, ##__VA_ARGS__ \
+#define warn(fmt, ...)                                            \
+    __logger(                                                     \
+        LOG_WARN,                                                 \
+        "[%s:%d]\x1B[0m " fmt, __FILE__, __LINE__, ##__VA_ARGS__  \
     )
 
 #define error(fmt, ...)                                           \
