@@ -1341,7 +1341,7 @@ bool vk_buffer_copy_to_image(RenderContext *ctx, VkBuffer buf, VkImage img,
     return true;
 }
 
-bool vk_vertices_indices_create(RenderContext *ctx, Object *obj) {
+bool vk_vertices_indices_copy(RenderContext *ctx, Object *obj) {
     void *data;
     VkDeviceSize buf_size;
     VkBuffer staging_buf;

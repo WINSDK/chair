@@ -43,7 +43,8 @@ void sdl_renderer_destroy(RenderContext *ctx) {
     info("SDL2 destroyed");
 }
 
-// converts position to 16:9
+
+// converts position to 16:9 (remove this stupid function tmrw pls)
 void convert_pos_to_aspect_ratio(float pos[4][2]) {
     for (u32 idx = 0; idx < 4; idx++) {
         pos[idx][0] *= 9.0 / 16;
@@ -118,7 +119,7 @@ bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path) {
     obj->indices[4] = 3;
     obj->indices[5] = 0;
 
-    if (!vk_vertices_indices_create(ctx, obj)) {
+    if (!vk_vertices_indices_copy(ctx, obj)) {
         error("failed to create vulkan internal vertices and indices");
         return false;
     }
@@ -135,6 +136,14 @@ bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path) {
 
     return true;
 };
+
+// transform object position by x and y amount
+void object_transform(Object *obj, float x, float y) {
+    for (u32 idx = 0; idx < obj->vertices_count; idx++) {
+        obj->vertices[idx].pos[0] += x;
+        obj->vertices[idx].pos[1] += y;
+    }
+}
 
 // destroys all objects at once
 void objects_destroy(RenderContext *ctx) {

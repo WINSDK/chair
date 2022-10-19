@@ -233,9 +233,9 @@ void vk_engine_create(RenderContext *ctx);
 void vk_engine_destroy(RenderContext *ctx);
 void vk_engine_render(RenderContext *ctx);
 
-bool vk_vertices_indices_create(RenderContext *ctx, Object *obj);
 bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path);
 bool vk_descriptor_sets_create(RenderContext *ctx, Texture *tex);
+bool vk_vertices_indices_copy(RenderContext *ctx, Object *obj);
 
 void sdl_renderer_create(RenderContext *ctx);
 void sdl_renderer_destroy(RenderContext *ctx);
@@ -243,6 +243,8 @@ void sdl_renderer_destroy(RenderContext *ctx);
 void convert_pos_to_aspect_ratio(float pos[4][2]);
 
 bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path);
+void object_transform(Object *obj, float x, float y);
+
 void objects_destroy(RenderContext *ctx);
 
 #endif // RENDER_H_

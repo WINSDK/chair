@@ -7,6 +7,7 @@
 void event_loop(RenderContext *ctx) {
     const u8 *board = SDL_GetKeyboardState(NULL);
     SDL_Event event;
+    bool vert_update_required = false;
 
     for (;;) {
         while (SDL_PollEvent(&event)) {
@@ -16,6 +17,31 @@ void event_loop(RenderContext *ctx) {
 
         if (board[SDL_SCANCODE_C] && board[SDL_SCANCODE_LCTRL])
             break;
+
+        if (board[SDL_SCANCODE_W]) {
+            object_transform(&ctx->objects[1], 0.0, -0.003);
+            vert_update_required = true;
+        }
+
+        if (board[SDL_SCANCODE_S]) {
+            object_transform(&ctx->objects[1], 0.0, 0.003);
+            vert_update_required = true;
+        }
+
+        if (board[SDL_SCANCODE_D]) {
+            object_transform(&ctx->objects[1], 0.003, 0.0);
+            vert_update_required = true;
+        }
+
+        if (board[SDL_SCANCODE_A]) {
+            object_transform(&ctx->objects[1],  -0.003, 0.0);
+            vert_update_required = true;
+        }
+
+        if (vert_update_required) {
+            vk_vertices_indices_copy(ctx, &ctx->objects[1]);
+            vert_update_required = false;
+        }
 
         vk_engine_render(ctx);
     }
