@@ -1306,9 +1306,9 @@ bool vk_buffer_create(RenderContext *ctx, VkDeviceSize size,
     return true;
 }
 
-bool vk_buffer_copy_to_image(RenderContext *ctx, VkBuffer buf, VkImage img,
+bool vk_buffer_copy_to_image(RenderContext *ctx,
+                             VkBuffer buf, VkImage img,
                              u32 width, u32 height) {
-
     VkCommandBuffer cmd_buf;
 
     VkBufferImageCopy region = {
@@ -1341,14 +1341,32 @@ bool vk_buffer_copy_to_image(RenderContext *ctx, VkBuffer buf, VkImage img,
     return true;
 }
 
-bool vk_vertices_copy(RenderContext *ctx, Object *obj) {
-    void *data;
-    VkDeviceSize buf_size;
-    VkBuffer staging_buf;
-    VkDeviceMemory staging_buf_mem;
+/* Copies the vertices positions in `ctx->vertices` to the GPU. */
+bool vk_vertices_update(RenderContext *ctx, Object *obj) {
+    VkDeviceSize buf_size = sizeof(Vertex) * obj->vertices_count;
     bool success;
 
-    buf_size = sizeof(Vertex) * obj->vertices_count;
+    memcpy(obj->vertices_gpu_mem, obj->vertices, buf_size);
+
+    success = vk_buffer_copy(
+        ctx,
+        obj->vertices_buf,
+        obj->vertices_staging_buf,
+        buf_size
+    );
+
+    if (!success) {
+        error("failed to copy staging buffer into vertex buffer");
+        return false;
+    }
+
+    return true;
+}
+
+/* Create all required buffers for the vertices and maps GPU memory. */
+bool vk_vertices_create(RenderContext *ctx, Object *obj) {
+    VkDeviceSize buf_size = sizeof(Vertex) * obj->vertices_count;
+    bool success;
 
     success = vk_buffer_create(
         ctx,
@@ -1356,23 +1374,30 @@ bool vk_vertices_copy(RenderContext *ctx, Object *obj) {
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        &staging_buf,
-        &staging_buf_mem
+        &obj->vertices_staging_buf,
+        &obj->vertices_staging_mem
     );
 
     if (!success) {
-        error("failed to create vertex staging buffer");
+        error("failed to create index staging buffer");
         return false;
     }
 
-    if (vkMapMemory(ctx->driver, staging_buf_mem, 0, buf_size, 0, &data)) {
-        error("failed to map vertex buffer memory");
-        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+    success = vkMapMemory(
+        ctx->driver,
+        obj->vertices_staging_mem,
+        0,
+        buf_size,
+        0,
+        &obj->vertices_gpu_mem
+    ) == VK_SUCCESS;
+
+    if (!success) {
+        error("failed to map index buffer memory");
+        vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
+        vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
         return false;
     }
-
-    memcpy(data, obj->vertices, (usize)buf_size);
-    vkUnmapMemory(ctx->driver, staging_buf_mem);
 
     success = vk_buffer_create(
         ctx,
@@ -1385,33 +1410,52 @@ bool vk_vertices_copy(RenderContext *ctx, Object *obj) {
     );
 
     if (!success) {
-        error("failed to create vertex buffer");
-        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
-        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        error("failed to create index buffer");
+        vkUnmapMemory(ctx->driver, obj->vertices_gpu_mem);
+        vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
+        vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
         return false;
     }
 
-    if (!vk_buffer_copy(ctx, obj->vertices_buf, staging_buf, buf_size)) {
-        error("failed to copy staging buf into vertex buf");
-        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
-        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+    if (!vk_vertices_update(ctx, obj)) {
+        error("failed to update vertices");
+        vkUnmapMemory(ctx->driver, obj->vertices_gpu_mem);
+        vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
+        vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
+        vkDestroyBuffer(ctx->driver, obj->vertices_buf, NULL);
+        vkFreeMemory(ctx->driver, obj->vertices_mem, NULL);
         return false;
     }
-
-    vkDestroyBuffer(ctx->driver, staging_buf, NULL);
-    vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
 
     return true;
 }
 
-bool vk_indices_copy(RenderContext *ctx, Object *obj) {
-    void *data;
-    VkDeviceSize buf_size;
-    VkBuffer staging_buf;
-    VkDeviceMemory staging_buf_mem;
+/* Copies the vertices positions in `ctx->indices` to the GPU. */
+bool vk_indices_update(RenderContext *ctx, Object *obj) {
+    VkDeviceSize buf_size = sizeof(u16) * obj->indices_count;
     bool success;
 
-    buf_size = sizeof(u16) * obj->indices_count;
+    memcpy(obj->indices_gpu_mem, obj->indices, buf_size);
+
+    success = vk_buffer_copy(
+        ctx,
+        obj->indices_buf,
+        obj->indices_staging_buf,
+        buf_size
+    );
+
+    if (!success) {
+        error("failed to copy staging buffer into index buffer");
+        return false;
+    }
+
+    return true;
+}
+
+/* Create all required buffers for the indices and maps GPU memory. */
+bool vk_indices_create(RenderContext *ctx, Object *obj) {
+    VkDeviceSize buf_size = sizeof(u16) * obj->indices_count;
+    bool success;
 
     success = vk_buffer_create(
         ctx,
@@ -1419,8 +1463,8 @@ bool vk_indices_copy(RenderContext *ctx, Object *obj) {
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        &staging_buf,
-        &staging_buf_mem
+        &obj->indices_staging_buf,
+        &obj->indices_staging_mem
     );
 
     if (!success) {
@@ -1428,14 +1472,21 @@ bool vk_indices_copy(RenderContext *ctx, Object *obj) {
         return false;
     }
 
-    if (vkMapMemory(ctx->driver, staging_buf_mem, 0, buf_size, 0, &data)) {
+    success = vkMapMemory(
+        ctx->driver,
+        obj->indices_staging_mem,
+        0,
+        buf_size,
+        0,
+        &obj->indices_gpu_mem
+    ) == VK_SUCCESS;
+
+    if (!success) {
         error("failed to map index buffer memory");
-        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
+        vkDestroyBuffer(ctx->driver, obj->indices_staging_buf, NULL);
+        vkFreeMemory(ctx->driver, obj->indices_staging_mem, NULL);
         return false;
     }
-
-    memcpy(data, obj->indices, (usize)buf_size);
-    vkUnmapMemory(ctx->driver, staging_buf_mem);
 
     success = vk_buffer_create(
         ctx,
@@ -1449,23 +1500,27 @@ bool vk_indices_copy(RenderContext *ctx, Object *obj) {
 
     if (!success) {
         error("failed to create index buffer");
-        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
-        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+        vkUnmapMemory(ctx->driver, obj->indices_gpu_mem);
+        vkDestroyBuffer(ctx->driver, obj->indices_staging_buf, NULL);
+        vkFreeMemory(ctx->driver, obj->indices_staging_mem, NULL);
+        return false;
     }
 
-    if (!vk_buffer_copy(ctx, obj->indices_buf, staging_buf, buf_size)) {
-        error("failed to copy staging buf into index buf");
-        vkDestroyBuffer(ctx->driver, staging_buf, NULL);
-        vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
+    if (!vk_indices_update(ctx, obj)) {
+        error("failed to update indices");
+        vkUnmapMemory(ctx->driver, obj->indices_gpu_mem);
+        vkDestroyBuffer(ctx->driver, obj->indices_staging_buf, NULL);
+        vkFreeMemory(ctx->driver, obj->indices_staging_mem, NULL);
+        vkDestroyBuffer(ctx->driver, obj->indices_buf, NULL);
+        vkFreeMemory(ctx->driver, obj->indices_mem, NULL);
+        return false;
     }
-
-    vkDestroyBuffer(ctx->driver, staging_buf, NULL);
-    vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
 
     return true;
 }
 
-/// transform image data to a layout more memory cache friendly to the GPU
+
+/* Transform image data to a layout more memory cache friendly to the GPU. */
 bool vk_image_layout_transition(RenderContext *ctx, VkImage img,
                                 VkImageLayout old_layout,
                                 VkImageLayout new_layout) {

@@ -62,10 +62,10 @@ target/release:
 	@mkdir -p $@
 
 target/sanitize/main: target/sanitize $(SAN_OBJS) $(SHADERS)
-	$(CC) $(LDFLAGS) $(SAN_OBJS) -o $@
+	$(CC) $(SAN_OBJS) $(LDFLAGS) -o $@
 
 target/debug/main: target/debug $(DEB_OBJS) $(SHADERS)
-	$(CC) $(LDFLAGS) $(DEB_OBJS) -o $@
+	$(CC) $(DEB_OBJS) $(LDFLAGS) -o $@
 
 target/release/main: target/release $(REL_OBJS) $(SHADERS)
 	$(CC) $(REL_OBJS) $(LDFLAGS) -o $@

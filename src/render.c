@@ -110,13 +110,13 @@ bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path) {
     obj->indices[4] = 3;
     obj->indices[5] = 0;
 
-    if (!vk_vertices_copy(ctx, obj)) {
-        error("failed to copy to GPU vertices buffer");
+    if (!vk_vertices_create(ctx, obj)) {
+        error("failed to create GPU vertices buffer");
         return false;
     }
 
-    if (!vk_indices_copy(ctx, obj)) {
-        error("failed to copy to GPU indices buffer");
+    if (!vk_indices_create(ctx, obj)) {
+        error("failed to create GPU indices buffer");
         return false;
     }
 
@@ -164,6 +164,18 @@ void objects_destroy(RenderContext *ctx) {
         vkDestroyImage(ctx->driver, obj->texture.image, NULL);
         vkFreeMemory(ctx->driver, obj->texture.mem, NULL);
         vkDestroySampler(ctx->driver, obj->texture.sampler, NULL);
+
+        // destroy staging buffers
+        vkDestroyBuffer(ctx->driver, obj->indices_staging_buf, NULL);
+        vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
+
+        // unmap staging buffer memory
+        vkUnmapMemory(ctx->driver, obj->vertices_staging_mem);
+        vkUnmapMemory(ctx->driver, obj->indices_staging_mem);
+
+        // free staging buffer memory
+        vkFreeMemory(ctx->driver, obj->indices_staging_mem, NULL);
+        vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
     }
 
     free(ctx->objects);

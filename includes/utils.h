@@ -87,6 +87,7 @@ void __array(const char **msgs, u32 len, const char *format, ...);
     )
 
 void *vmalloc(usize size);
+void *vcalloc(usize size);
 void *vrealloc(void* ptr, usize size);
 
 struct timespec now();
@@ -95,7 +96,5 @@ struct timespec time_elapsed(struct timespec start);
 char *read_binary(const char *path, u32 *bytes_read);
 
 u32 clamp(u32 val, u32 min, u32 max);
-u32 min(u32 a, u32 b);
-u32 max(u32 a, u32 b);
 
 #endif // UTILS_H_

@@ -106,6 +106,15 @@ typedef struct {
     /* Reference to the memory in `vertex_memory` */
     VkBuffer vertices_buf;
 
+    /* Memory on the GPU that holds the `indices_staging_buf` */
+    VkDeviceMemory vertices_staging_mem;
+
+    /* Intermediate buffer for writting to the vertices on the GPU */
+    VkBuffer vertices_staging_buf;
+
+    /* Memory on the GPU returned by `vkMapMemory` */
+    void *vertices_gpu_mem;
+
     /* Offsets into `vertices` */
     u16 *indices;
 
@@ -117,6 +126,15 @@ typedef struct {
 
     /* Reference to the memory in `indices_memory` */
     VkBuffer indices_buf;
+
+    /* Memory on the GPU that holds the `indices_staging_buf` */
+    VkDeviceMemory indices_staging_mem;
+
+    /* Intermediate buffer for writting to the indices on the GPU */
+    VkBuffer indices_staging_buf;
+
+    /* Memory on the GPU returned by `vkMapMemory` */
+    void *indices_gpu_mem;
 
     /* Everything related to the object's texture */
     Texture texture;
@@ -237,8 +255,11 @@ bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path);
 bool vk_descriptor_sets_create(RenderContext *ctx, Texture *tex);
 bool vk_image_sampler_create(RenderContext *ctx, Texture *tex);
 
-bool vk_vertices_copy(RenderContext *ctx, Object *obj);
-bool vk_indices_copy(RenderContext *ctx, Object *obj);
+bool vk_vertices_create(RenderContext *ctx, Object *obj);
+bool vk_vertices_update(RenderContext *ctx, Object *obj);
+
+bool vk_indices_create(RenderContext *ctx, Object *obj);
+bool vk_indices_update(RenderContext *ctx, Object *obj);
 
 void sdl_renderer_create(RenderContext *ctx);
 void sdl_renderer_destroy(RenderContext *ctx);

@@ -39,7 +39,7 @@ void event_loop(RenderContext *ctx) {
         }
 
         if (vert_update_required) {
-            if (!vk_vertices_copy(ctx, &ctx->objects[1]))
+            if (!vk_vertices_update(ctx, &ctx->objects[1]))
                 warn("failed to copy vertices");
 
             vert_update_required = false;
