@@ -20,8 +20,8 @@
  * pos is in location 0
  * tex is in location 1 */
 typedef struct Vertex {
-    float pos[2];
-    float tex[2];
+    f32 pos[2];
+    f32 tex[2];
 } __attribute__ ((aligned (8))) Vertex;
 
 typedef struct {
@@ -94,6 +94,9 @@ typedef struct {
  * However as every member of Object and it's members are just pointers
  * I feel like the cost of copying over the struct on appends isn't too bad */
 typedef struct {
+    /* Name of the texture */
+    const char *ident;
+
     /* Vertices of the object to be renderer */
     Vertex *vertices;
 
@@ -162,11 +165,8 @@ typedef struct {
     /* Interface for which to send command buffers to the GPU */
     VkQueue queue;
 
-    /* ??? */
-    u32 queue_family_indices;
-
-    /* ??? */
-    VkQueue present_queue;
+    /* Index of the queue family that supports graphics commands */
+    u32 queue_family;
 
     /* Option for different types of vsync or none at all */
     VkPresentModeKHR present_mode;
@@ -247,13 +247,34 @@ typedef struct {
     u32 object_alloc_count;
 } RenderContext;
 
+typedef struct {
+    /* Whether or not the menu is open */
+    bool menu_open;
+
+    /* Whether or not the window is in fullscreen mode */
+    bool fullscreen;
+
+    /* Indicator that the game should be exited ASAP */
+    bool quit_game;
+
+    /* Indicator that the vertices have changed */
+    bool update_vertices;
+
+    /* Movement generated since last position update */
+    f32 dx, dy;
+} Game;
+
 void vk_engine_create(RenderContext *ctx);
 void vk_engine_destroy(RenderContext *ctx);
 void vk_engine_render(RenderContext *ctx);
 
-bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path);
 bool vk_descriptor_sets_create(RenderContext *ctx, Texture *tex);
 bool vk_image_sampler_create(RenderContext *ctx, Texture *tex);
+
+bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path);
+bool vk_image_from_surface(RenderContext *ctx, Texture *tex, SDL_Surface *img);
+
+bool vk_swapchain_recreate(RenderContext *ctx);
 
 bool vk_vertices_create(RenderContext *ctx, Object *obj);
 bool vk_vertices_update(RenderContext *ctx, Object *obj);
@@ -264,9 +285,20 @@ bool vk_indices_update(RenderContext *ctx, Object *obj);
 void sdl_renderer_create(RenderContext *ctx);
 void sdl_renderer_destroy(RenderContext *ctx);
 
-bool object_create(RenderContext *ctx, float pos[4][2], const char *img_path);
-void object_transform(Object *obj, float x, float y);
+bool level_map_load(RenderContext *ctx,
+                    const char *level_path,
+                    const char *tileset_path);
 
+SDL_Surface *sdl_load_image(const char *path);
+
+Object *object_find(RenderContext *ctx, const char *ident);
+
+bool object_create(RenderContext *ctx, f32 pos[4][2], const char *img_path);
+
+void object_transform(Object *obj, f32 x, f32 y);
+void objects_recreate(RenderContext *ctx);
+
+bool object_find_destroy(RenderContext *ctx, const char *ident);
 void objects_destroy(RenderContext *ctx);
 
 #endif // RENDER_H_

@@ -6,7 +6,6 @@ CFLAGS  = -std=c11 -fwrapv \
 		  -fno-delete-null-pointer-checks \
 		  -funsigned-char \
 		  -Wall \
-		  -Wfloat-equal \
 		  -Wstring-compare \
 		  -Wuninitialized
 
@@ -50,7 +49,7 @@ release: target/release/main
 	./target/release/main
 
 clean:
-	rm -rf target compile_commands.json
+	rm -rf target
 
 target/sanitize:
 	@mkdir -p $@

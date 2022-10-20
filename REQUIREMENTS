@@ -1,4 +1,8 @@
-ubuntu requirements:
+### ubuntu requirements
 
 sudo sysctl dev.i915.perf_stream_paranoid=0
 sudo apt install libvulkan-dev vulkan-validationlayers-dev glslang-tools libsdl2-dev pkg-config
+
+### arch requirements
+
+sudo pacman -S vulkan-headers vulkan-validation-layers glslang pkgconf sdl2

@@ -1,6 +1,7 @@
 #include <stdio.h>
+#include <utils.h>
 
 /// Overriding the unloading of libraries to doing nothing.
-int dlclose(void* p) { 
+i32 dlclose(void* p) {
     return 0; 
 }

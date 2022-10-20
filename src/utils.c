@@ -8,7 +8,7 @@
 
 #include "utils.h"
 
-static atomic_uint LEVEL = LOG_TRACE;
+static atomic_uint LEVEL = LOG_INFO;
 
 LogLevel get_log_level() {
     return atomic_load(&LEVEL);
@@ -109,48 +109,35 @@ void *vrealloc(void *ptr, usize size) {
 
 // Force `val` to be between `min` and `max`.
 u32 clamp(u32 val, u32 min, u32 max) {
-    if (val < min) {
-        return min;
-    }
-
-    if (val > max) {
-        return max;
-    }
-
-    return val;
+    return val < min ? min : max;
 }
 
-struct timespec now() {
-    struct timespec time;
+void now(struct timespec *time) {
 
 #ifdef __linux__
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time);
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, time);
 #else
-    timespec_get(&time, TIME_UTC);
+    timespec_get(time, TIME_UTC);
 #endif
 
-    return time;
 }
 
-struct timespec time_elapsed(struct timespec start) {
+/* Calculates the numbers of seconds elapseds since some starting point */
+f64 time_elapsed(struct timespec *start) {
     struct timespec diff, time;
 
-#ifdef __linux__
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time);
-#else
-    timespec_get(&time, TIME_UTC);
-#endif
+    now(&time);
 
     // calculate the difference between `start` and now
-    if ((time.tv_nsec - start.tv_nsec) < 0) {
-        diff.tv_sec = time.tv_sec - start.tv_sec - 1;
-        diff.tv_nsec = 1000000000 + time.tv_nsec - start.tv_nsec;
+    if ((time.tv_nsec - start->tv_nsec) < 0) {
+        diff.tv_sec = time.tv_sec - start->tv_sec - 1;
+        diff.tv_nsec = 1000000000 + time.tv_nsec - start->tv_nsec;
     } else {
-        diff.tv_sec = time.tv_sec - start.tv_sec;
-        diff.tv_nsec = time.tv_nsec - start.tv_nsec;
+        diff.tv_sec = time.tv_sec - start->tv_sec;
+        diff.tv_nsec = time.tv_nsec - start->tv_nsec;
     }
 
-    return diff;
+    return (f64)diff.tv_sec + (f64)diff.tv_nsec * 1.0e-9;
 }
 
 /// Reads file and returns NULL if it failed
@@ -162,7 +149,7 @@ char *read_binary(const char *path, u32 *bytes_read) {
 
     // read file length
     fseek(fh, 0, SEEK_END);
-    size_t size = ftell(fh);
+    usize size = ftell(fh);
     rewind(fh);
 
     char *bytes = vmalloc(size);

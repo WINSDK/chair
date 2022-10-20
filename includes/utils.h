@@ -90,8 +90,8 @@ void *vmalloc(usize size);
 void *vcalloc(usize size);
 void *vrealloc(void* ptr, usize size);
 
-struct timespec now();
-struct timespec time_elapsed(struct timespec start);
+void now(struct timespec *time);
+f64 time_elapsed(struct timespec *start);
 
 char *read_binary(const char *path, u32 *bytes_read);
 

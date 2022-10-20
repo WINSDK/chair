@@ -193,7 +193,7 @@ bool try_preferred_swapchain_format(RenderContext *ctx) {
     return false;
 }
 
-/// Find a queue family that supports graphics.
+/* Try to find a queue family that supports graphics. */
 bool find_queue_families(RenderContext *ctx) {
     u32 count;
     VkQueueFamilyProperties *families;
@@ -204,7 +204,7 @@ bool find_queue_families(RenderContext *ctx) {
 
     for (u32 idx = 0; idx < count; idx++) {
         if (families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            ctx->queue_family_indices = idx;
+            ctx->queue_family = idx;
 
             free(families);
             return true;
@@ -215,7 +215,7 @@ bool find_queue_families(RenderContext *ctx) {
     return false;
 }
 
-/// Store the names of all available layers.
+/* Retrieve the names of all available layers. */
 void vk_valididation_create(ValidationLayers *valid) {
     u32 idx;
 
@@ -275,6 +275,7 @@ static PFN_vkCreateDebugUtilsMessengerEXT CreateDebugUtilsMessengerEXT;
 static PFN_vkDestroyDebugUtilsMessengerEXT DestroyDebugUtilsMessengerEXT;
 
 bool vk_debugger_create(RenderContext *ctx) {
+
     VkDebugUtilsMessengerCreateInfoEXT create_info = {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
         .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
@@ -308,8 +309,8 @@ bool vk_debugger_create(RenderContext *ctx) {
     ) == VK_SUCCESS;
 }
 
-/// Create a valid swapchain present extent.
-void create_swapchain_present_extent(RenderContext *ctx) {
+/* Create a valid swapchain present extent. */
+void vk_swapchain_present_create(RenderContext *ctx) {
     VkSurfaceCapabilitiesKHR *capabilities = &ctx->swapchain.capabilities;
     i32 width, height;
 
@@ -321,24 +322,22 @@ void create_swapchain_present_extent(RenderContext *ctx) {
         SDL_WaitEvent(NULL);
     }
 
-    // some window managers set currentExtent.width to u32::MAX for some reason
-    // so we'll just make up a good resolution in this case
-    if (capabilities->currentExtent.width == 0xFFFFFFFF) {
-        ctx->dimensions.width =
-            clamp((u32)width, capabilities->minImageExtent.width,
-                  capabilities->maxImageExtent.width);
+    ctx->dimensions.width = clamp(
+        width,
+        capabilities->minImageExtent.width,
+        capabilities->maxImageExtent.width
+    );
 
-        ctx->dimensions.height =
-            clamp((u32)height, capabilities->minImageExtent.height,
-                  capabilities->maxImageExtent.height);
-    } else {
-        ctx->dimensions = capabilities->currentExtent;
-    }
+    ctx->dimensions.height = clamp(
+        height,
+        capabilities->minImageExtent.height,
+        capabilities->maxImageExtent.height
+    );
 }
 
-/// generate a method to interact with images (image views).
-///
-/// `img_view` is the result of creating an image view
+/* Generate a method to interact with images (image views).
+ *
+ * `img_view` is the result of creating an image view. */
 bool vk_image_view_create(RenderContext *ctx,
                           VkImage img,
                           VkFormat format,
@@ -379,7 +378,7 @@ bool vk_swapchain_image_views_create(RenderContext *ctx) {
 
         if (!success) {
             for (u32 jdx = 0; jdx < idx; jdx++)
-                vkDestroyImage(ctx->driver, chain->images[jdx], NULL);
+                vkDestroyImageView(ctx->driver, chain->views[jdx], NULL);
 
             free(chain->views);
             return false;
@@ -391,7 +390,6 @@ bool vk_swapchain_image_views_create(RenderContext *ctx) {
 
 bool vk_framebuffers_create(RenderContext *ctx) {
     SwapChainDescriptor *chain = &ctx->swapchain;
-    VkImageView attachments[1];
 
     VkFramebufferCreateInfo framebuffer_info = {
         .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -399,13 +397,13 @@ bool vk_framebuffers_create(RenderContext *ctx) {
         .attachmentCount = 1,
         .width = ctx->dimensions.width,
         .height = ctx->dimensions.height,
-        .layers = 1};
+        .layers = 1
+    };
 
     chain->framebuffers = vmalloc(chain->image_count * sizeof(VkFramebuffer));
 
     for (u32 idx = 0; idx < chain->image_count; idx++) {
-        attachments[0] = chain->views[idx];
-        framebuffer_info.pAttachments = attachments;
+        framebuffer_info.pAttachments = &chain->views[idx];
 
         if (vkCreateFramebuffer(ctx->driver, &framebuffer_info, NULL,
                                 &chain->framebuffers[idx]))
@@ -448,7 +446,7 @@ bool vk_swapchain_create(RenderContext *ctx) {
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = VK_PRESENT_MODE_MAILBOX_KHR,
         .clipped = VK_TRUE,
-        .oldSwapchain = VK_NULL_HANDLE
+        .oldSwapchain = VK_NULL_HANDLE,
     };
 
     vk_fail = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
@@ -497,16 +495,8 @@ bool vk_swapchain_create(RenderContext *ctx) {
     if (!try_preferred_present_mode(ctx, &create_info.presentMode))
         create_info.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 
-    create_swapchain_present_extent(ctx);
+    vk_swapchain_present_create(ctx);
     create_info.imageExtent = ctx->dimensions;
-
-    if (ctx->present_queue != ctx->queue) {
-        create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    } else {
-        create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-        create_info.queueFamilyIndexCount = 2;
-        create_info.pQueueFamilyIndices = &ctx->queue_family_indices;
-    }
 
     if (vkCreateSwapchainKHR(ctx->driver, &create_info, NULL, &chain->data))
         return false;
@@ -577,12 +567,10 @@ bool vk_swapchain_recreate(RenderContext *ctx) {
 // NOTE: can create multiple logical devices with different requirements
 // for the same physical device
 
-// NOTE: for now the present_queue and queue will be the same
-
-/// Try to create a device, associated queue, present queue and surface.
+/* Try to create a device, associated queue, present queue and surface. */
 bool vk_device_create(RenderContext *ctx) {
     f32 queue_priority = 1.0;
-    const char *device_extensions[1] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    const char *device_extensions[1] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
     VkBool32 surface_supported = false;
     VkResult vk_fail;
 
@@ -610,7 +598,7 @@ bool vk_device_create(RenderContext *ctx) {
         return false;
     }
 
-    queue_create_info.queueFamilyIndex = ctx->queue_family_indices;
+    queue_create_info.queueFamilyIndex = ctx->queue_family;
     device_create_info.pQueueCreateInfos = &queue_create_info;
 
     if (vkCreateDevice(ctx->device, &device_create_info, NULL, &ctx->driver)) {
@@ -618,7 +606,7 @@ bool vk_device_create(RenderContext *ctx) {
         return false;
     }
 
-    vkGetDeviceQueue(ctx->driver, ctx->queue_family_indices, 0, &ctx->queue);
+    vkGetDeviceQueue(ctx->driver, ctx->queue_family, 0, &ctx->queue);
 
     if (!SDL_Vulkan_CreateSurface(ctx->window, ctx->instance, &ctx->surface)) {
         warn("failed to create surface");
@@ -627,7 +615,7 @@ bool vk_device_create(RenderContext *ctx) {
 
     vk_fail = vkGetPhysicalDeviceSurfaceSupportKHR(
         ctx->device,
-        ctx->queue_family_indices,
+        ctx->queue_family,
         ctx->surface,
         &surface_supported
     );
@@ -640,8 +628,8 @@ bool vk_device_create(RenderContext *ctx) {
     return true;
 }
 
-/// Try to setup a device that supports the required
-/// features, extensions and swapchain.
+/* Try to setup a device that supports the required features, extensions
+ * and swapchain. */
 bool vk_most_suitable_device_create(RenderContext *ctx) {
     u32 device_count, idx;
     VkPhysicalDevice *devices;
@@ -797,16 +785,19 @@ bool vk_render_pass_create(RenderContext *ctx) {
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
+        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+    };
 
     VkAttachmentReference color_attachment_ref = {
-        .attachment = 0, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-
-    // NOTE: one attachment can have multiple subpasses for post-processing
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+    };
 
     // `pColorAttachments` refers to `layout(location = 0) out vec4 outColor`
-    VkSubpassDescription subpass = {.colorAttachmentCount = 1,
-                                    .pColorAttachments = &color_attachment_ref};
+    VkSubpassDescription subpass = {
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &color_attachment_ref
+    };
 
     VkSubpassDependency dependency = {
         .srcSubpass = VK_SUBPASS_EXTERNAL,
@@ -824,7 +815,8 @@ bool vk_render_pass_create(RenderContext *ctx) {
         .pSubpasses = &subpass,
         .subpassCount = 1,
         .pDependencies = &dependency,
-        .dependencyCount = 1};
+        .dependencyCount = 1
+    };
 
     return vkCreateRenderPass(
         ctx->driver,
@@ -980,7 +972,7 @@ bool vk_pipeline_create(RenderContext *ctx) {
     vert_bin = read_binary("./target/shader.vert.spv", &vert_size);
     frag_bin = read_binary("./target/shader.frag.spv", &frag_size);
 
-    if (vert_bin == NULL || frag_bin == NULL) {
+    if (!vert_bin || !frag_bin) {
         error("failed to read shader source");
         return false;
     }
@@ -1013,8 +1005,8 @@ bool vk_pipeline_create(RenderContext *ctx) {
 
     ctx->viewport.x = 0.0;
     ctx->viewport.y = 0.0;
-    ctx->viewport.width = (float)ctx->dimensions.width;
-    ctx->viewport.height = (float)ctx->dimensions.height;
+    ctx->viewport.width = (f32)ctx->dimensions.width;
+    ctx->viewport.height = (f32)ctx->dimensions.height;
     ctx->viewport.minDepth = 0.0;
     ctx->viewport.maxDepth = 1.0;
     viewport_info.pViewports = &ctx->viewport;
@@ -1081,6 +1073,8 @@ bool vk_descriptor_layouts_create(RenderContext *ctx) {
     ) == VK_SUCCESS;
 }
 
+#define DESC_POOL_SIZE 32 * 18
+
 bool vk_descriptor_pool_create(RenderContext *ctx) {
     // pool big enough for a sampler
     VkDescriptorPoolSize pool_size = {
@@ -1092,7 +1086,7 @@ bool vk_descriptor_pool_create(RenderContext *ctx) {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .poolSizeCount = 1,
         .pPoolSizes = &pool_size,
-        .maxSets = MAX_FRAMES_LOADED * 3
+        .maxSets = MAX_FRAMES_LOADED * (DESC_POOL_SIZE + 1)
     };
 
     return vkCreateDescriptorPool(
@@ -1165,7 +1159,8 @@ bool vk_cmd_pool_create(RenderContext *ctx) {
     VkCommandPoolCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = ctx->queue_family_indices};
+        .queueFamilyIndex = ctx->queue_family
+    };
 
     return vkCreateCommandPool(
         ctx->driver,
@@ -1419,9 +1414,9 @@ bool vk_vertices_create(RenderContext *ctx, Object *obj) {
 
     if (!vk_vertices_update(ctx, obj)) {
         error("failed to update vertices");
-        vkUnmapMemory(ctx->driver, obj->vertices_gpu_mem);
         vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
         vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
+        vkUnmapMemory(ctx->driver, obj->vertices_gpu_mem);
         vkDestroyBuffer(ctx->driver, obj->vertices_buf, NULL);
         vkFreeMemory(ctx->driver, obj->vertices_mem, NULL);
         return false;
@@ -1643,35 +1638,12 @@ bool vk_image_texture_create(RenderContext *ctx,
     return true;
 }
 
-bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path) {
+bool vk_image_from_surface(RenderContext *ctx, Texture *tex, SDL_Surface *img) {
     VkDeviceSize img_size;
-    SDL_Surface *img;
-    SDL_Surface *conv_img;
     VkDeviceMemory staging_buf_mem;
     VkBuffer staging_buf;
     void *data;
     bool success;
-
-    if (!(img = SDL_LoadBMP(path))) {
-        error("failed to load image: '%s'", path);
-        return false;
-    }
-
-    /* ------- convert surface to `VK_FORMAT_B8G8R8A8_SRGB` ------- */
-    conv_img = SDL_ConvertSurfaceFormat(
-        img,
-        SDL_PIXELFORMAT_BGRA32,
-        0
-    );
-
-    if (conv_img == NULL) {
-        error("failed to convert image to 'VK_FORMAT_B8G8R8A8_SRGB'");
-        return false;
-    }
-
-    SDL_FreeSurface(img);
-    img = conv_img;
-    /* ------------------------------------------------------------ */
 
     img_size = img->w * img->h * img->format->BytesPerPixel;
 
@@ -1686,14 +1658,12 @@ bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path) {
     );
 
     if (!success) {
-        SDL_FreeSurface(img);
         error("failed to create image buffer");
         return false;
     }
 
     if (vkMapMemory(ctx->driver, staging_buf_mem, 0, img_size, 0, &data)) {
         error("failed to map vertex buffer memory");
-        SDL_FreeSurface(img);
         vkDestroyBuffer(ctx->driver, staging_buf, NULL);
         return false;
     }
@@ -1703,7 +1673,6 @@ bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path) {
 
     if (!vk_image_texture_create(ctx, tex, img)) {
         error("failed to create image texture");
-        SDL_FreeSurface(img);
         vkDestroyBuffer(ctx->driver, staging_buf, NULL);
         vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
         return false;
@@ -1719,7 +1688,6 @@ bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path) {
 
     if (!success) {
         error("failed to transition image to optimal layout");
-        SDL_FreeSurface(img);
         vkDestroyBuffer(ctx->driver, staging_buf, NULL);
         vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
         vkDestroyImage(ctx->driver, tex->image, NULL);
@@ -1736,14 +1704,11 @@ bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path) {
 
     if (!success) {
         error("failed to copy staging buffer into VkImage");
-        SDL_FreeSurface(img);
         vkDestroyBuffer(ctx->driver, staging_buf, NULL);
         vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
         vkDestroyImage(ctx->driver, tex->image, NULL);
         return false;
     }
-
-    SDL_FreeSurface(img);
 
     success = vk_image_layout_transition(
         ctx,
@@ -1779,6 +1744,22 @@ bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path) {
     vkFreeMemory(ctx->driver, staging_buf_mem, NULL);
 
     return true;
+}
+
+/* BMP Images are cached and not freed till the end of the program.
+ *
+ * Therefore if a texture has already been loaded it will try to reuse it */
+bool vk_image_create(RenderContext *ctx, Texture *tex, const char *path) {
+    SDL_Surface *surface = sdl_load_image(path);
+    bool success;
+
+    if (!surface)
+        return false;
+
+    success = vk_image_from_surface(ctx, tex, surface);
+    SDL_FreeSurface(surface);
+
+    return success;
 }
 
 bool vk_image_sampler_create(RenderContext *ctx, Texture *tex) {
@@ -1875,12 +1856,11 @@ void vk_engine_create(RenderContext *ctx) {
     ctx->object_count = 0;
     ctx->object_alloc_count = 0;
 
-    float back[4][2] = { {-1.0, -1.0}, {1.0, -1.0}, {1.0, 1.0}, {-1.0, 1.0} };
-    float guy[4][2] = {
+    static f32 guy[4][2] = {
         { -2.0/16.0, -2.0/9.0 },
-        { 2.0/16.0, -2.0/9.0  },
-        { 2.0/16.0, 2.0/9.0   },
-        { -2.0/16.0, 2.0/9.0  }
+        {  2.0/16.0, -2.0/9.0 },
+        {  2.0/16.0,  2.0/9.0 },
+        { -2.0/16.0,  2.0/9.0 }
     };
 
     if (!vk_instance_create(ctx))
@@ -1919,11 +1899,11 @@ void vk_engine_create(RenderContext *ctx) {
     if (!vk_sync_primitives_create(ctx))
         panic("failed to create synchronization primitives");
 
-    if (!object_create(ctx, back, "./assets/room_base.bmp"))
-        panic("failed to create object");
-
-    //if (!object_create(ctx, back, "./assets/escape_menu.bmp"))
-    //    panic("failed to create object");
+    level_map_load(
+        ctx,
+        "./assets/map_1.csv",
+        "./assets/tileset.bmp"
+    );
 
     if (!object_create(ctx, guy, "./assets/guy.bmp"))
         panic("failed to create object");
@@ -1939,6 +1919,13 @@ void vk_engine_destroy(RenderContext *ctx) {
     objects_destroy(ctx);
 
     vk_sync_primitives_destroy(ctx);
+
+    vkFreeCommandBuffers(ctx->driver,
+        ctx->cmd_pool,
+        MAX_FRAMES_LOADED,
+        ctx->cmd_bufs
+    );
+
     vkDestroyCommandPool(ctx->driver, ctx->cmd_pool, NULL);
     vkDestroyDescriptorPool(ctx->driver, ctx->desc_pool, NULL);
     vk_pipeline_destroy(ctx);
@@ -1962,9 +1949,11 @@ void vk_engine_destroy(RenderContext *ctx) {
  * 4. Submit the recorded command buffer
  * 5. Present the swap chain image */
 
-bool vk_record_cmd_buffer(RenderContext *ctx, u32 img_idx) {
+bool vk_record_cmd_buffer(RenderContext *ctx,
+                          VkCommandBuffer cmd_buf,
+                          u32 img_idx) {
+
     VkDeviceSize offsets[1] = {0};
-    VkCommandBuffer cmd_buf = ctx->cmd_bufs[ctx->frame];
 
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -2034,8 +2023,7 @@ void vk_engine_render(RenderContext* ctx) {
     u32 img_idx;
     VkResult vk_fail;
     Synchronization *sync = &ctx->sync[ctx->frame];
-    VkSemaphore wait_semaphores[1] = { sync->images_available };
-    VkSemaphore signal_semaphores[1] = { sync->renders_finished };
+    VkCommandBuffer cmd_buf = ctx->cmd_bufs[ctx->frame];
 
     VkPipelineStageFlags wait_stages[1] = {
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
@@ -2043,22 +2031,20 @@ void vk_engine_render(RenderContext* ctx) {
 
     VkSubmitInfo submit_info = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .pWaitSemaphores = wait_semaphores,
+        .pWaitSemaphores = &sync->images_available,
         .waitSemaphoreCount = 1,
         .pWaitDstStageMask = wait_stages,
         .pCommandBuffers = &ctx->cmd_bufs[ctx->frame],
         .commandBufferCount = 1,
-        .pSignalSemaphores = signal_semaphores,
+        .pSignalSemaphores = &sync->renders_finished,
         .signalSemaphoreCount = 1
     };
 
-    VkSwapchainKHR swapchains[1] = { ctx->swapchain.data };
-
     VkPresentInfoKHR present_info = {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .pWaitSemaphores = signal_semaphores,
+        .pWaitSemaphores = &sync->renders_finished,
         .waitSemaphoreCount = 1,
-        .pSwapchains = swapchains,
+        .pSwapchains = &ctx->swapchain.data,
         .swapchainCount = 1,
         .pImageIndices = &img_idx
     };
@@ -2071,7 +2057,7 @@ void vk_engine_render(RenderContext* ctx) {
         UINT64_MAX
     );
 
-    vk_fail = vkAcquireNextImageKHR(
+    vkAcquireNextImageKHR(
         ctx->driver,
         ctx->swapchain.data,
         UINT64_MAX,
@@ -2080,22 +2066,10 @@ void vk_engine_render(RenderContext* ctx) {
         &img_idx
     );
 
-    if (vk_fail == VK_SUBOPTIMAL_KHR || vk_fail == VK_ERROR_OUT_OF_DATE_KHR) {
-        if (!vk_swapchain_recreate(ctx))
-            warn("failed to recreate swapchain");
-        return;
-    }
-
-    if (vk_fail) {
-        warn("failed to acquire next image in swapchain");
-        ctx->frame = (ctx->frame + 1) % MAX_FRAMES_LOADED;
-        return;
-    }
-
     vkResetFences(ctx->driver, 1, &sync->renderers_busy);
-    vkResetCommandBuffer(ctx->cmd_bufs[ctx->frame], 0);
+    vkResetCommandBuffer(cmd_buf, 0);
 
-    vk_record_cmd_buffer(ctx, img_idx);
+    vk_record_cmd_buffer(ctx, cmd_buf, img_idx);
 
     if (vkQueueSubmit(ctx->queue, 1, &submit_info, sync->renderers_busy)) {
         error("failed to submit command buffer to queue");
@@ -2103,9 +2077,20 @@ void vk_engine_render(RenderContext* ctx) {
         return;
     }
 
-    if (vkQueuePresentKHR(ctx->queue, &present_info)) {
-        error("failed to present queue");
+    vk_fail = vkQueuePresentKHR(ctx->queue, &present_info);
+
+    if (vk_fail == VK_SUBOPTIMAL_KHR || vk_fail == VK_ERROR_OUT_OF_DATE_KHR) {
+        if (!vk_swapchain_recreate(ctx))
+            warn("failed to recreate swapchain");
+
+        return;
+    }
+
+    if (vk_fail) {
+        warn("failed to present queue");
         ctx->frame = (ctx->frame + 1) % MAX_FRAMES_LOADED;
         return;
     }
+
+    ctx->frame = (ctx->frame + 1) % MAX_FRAMES_LOADED;
 }
