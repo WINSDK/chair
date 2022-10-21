@@ -265,7 +265,7 @@ vk_debug_handler(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
         if (get_log_level() == LOG_TRACE)
             __asm__("int3");
 
-        exit(1);
+        //exit(1);
     }
 
     return VK_FALSE;
@@ -1337,16 +1337,32 @@ bool vk_buffer_copy_to_image(RenderContext *ctx,
 }
 
 /* Copies the vertices positions in `ctx->vertices` to the GPU. */
-bool vk_vertices_update(RenderContext *ctx, Object *obj) {
+bool vk_vertices_update(RenderContext *ctx, Object *obj, ObjectType type) {
     VkDeviceSize buf_size = sizeof(Vertex) * obj->vertices_count;
     bool success;
+    VkBuffer staging_buf;
+    void *gpu_mem;
 
-    memcpy(obj->vertices_gpu_mem, obj->vertices, buf_size);
+    switch (type) {
+    case OBJECT_PLAYER:
+        staging_buf = ctx->player_staging_buf;
+        gpu_mem = ctx->player_gpu_mem;
+        break;
+    case OBJECT_TILE:
+        staging_buf = ctx->tile_staging_buf;
+        gpu_mem = ctx->tile_gpu_mem;
+        break;
+    default:
+        error("Unknown object type");
+        return false;
+    }
+
+    memcpy(gpu_mem, obj->vertices, buf_size);
 
     success = vk_buffer_copy(
         ctx,
         obj->vertices_buf,
-        obj->vertices_staging_buf,
+        staging_buf,
         buf_size
     );
 
@@ -1359,40 +1375,9 @@ bool vk_vertices_update(RenderContext *ctx, Object *obj) {
 }
 
 /* Create all required buffers for the vertices and maps GPU memory. */
-bool vk_vertices_create(RenderContext *ctx, Object *obj) {
+bool vk_vertices_create(RenderContext *ctx, Object *obj, ObjectType type) {
     VkDeviceSize buf_size = sizeof(Vertex) * obj->vertices_count;
     bool success;
-
-    success = vk_buffer_create(
-        ctx,
-        buf_size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        &obj->vertices_staging_buf,
-        &obj->vertices_staging_mem
-    );
-
-    if (!success) {
-        error("failed to create index staging buffer");
-        return false;
-    }
-
-    success = vkMapMemory(
-        ctx->driver,
-        obj->vertices_staging_mem,
-        0,
-        buf_size,
-        0,
-        &obj->vertices_gpu_mem
-    ) == VK_SUCCESS;
-
-    if (!success) {
-        error("failed to map index buffer memory");
-        vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
-        vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
-        return false;
-    }
 
     success = vk_buffer_create(
         ctx,
@@ -1406,17 +1391,11 @@ bool vk_vertices_create(RenderContext *ctx, Object *obj) {
 
     if (!success) {
         error("failed to create index buffer");
-        vkUnmapMemory(ctx->driver, obj->vertices_gpu_mem);
-        vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
-        vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
         return false;
     }
 
-    if (!vk_vertices_update(ctx, obj)) {
+    if (!vk_vertices_update(ctx, obj, type)) {
         error("failed to update vertices");
-        vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
-        vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
-        vkUnmapMemory(ctx->driver, obj->vertices_gpu_mem);
         vkDestroyBuffer(ctx->driver, obj->vertices_buf, NULL);
         vkFreeMemory(ctx->driver, obj->vertices_mem, NULL);
         return false;
@@ -1426,16 +1405,16 @@ bool vk_vertices_create(RenderContext *ctx, Object *obj) {
 }
 
 /* Copies the vertices positions in `ctx->indices` to the GPU. */
-bool vk_indices_update(RenderContext *ctx, Object *obj) {
-    VkDeviceSize buf_size = sizeof(u16) * obj->indices_count;
+bool vk_indices_update(RenderContext *ctx) {
+    VkDeviceSize buf_size = sizeof(u16) * ctx->indices_count;
     bool success;
 
-    memcpy(obj->indices_gpu_mem, obj->indices, buf_size);
+    memcpy(ctx->indices_gpu_mem, ctx->indices, buf_size);
 
     success = vk_buffer_copy(
         ctx,
-        obj->indices_buf,
-        obj->indices_staging_buf,
+        ctx->indices_buf,
+        ctx->indices_staging_buf,
         buf_size
     );
 
@@ -1447,41 +1426,24 @@ bool vk_indices_update(RenderContext *ctx, Object *obj) {
     return true;
 }
 
-/* Create all required buffers for the indices and maps GPU memory. */
-bool vk_indices_create(RenderContext *ctx, Object *obj) {
-    VkDeviceSize buf_size = sizeof(u16) * obj->indices_count;
+/* Create all required buffers for the indices and maps GPU memory. 
+ *
+ * Only creates vertices for squares as that's all we're using right now. */
+bool vk_indices_create(RenderContext *ctx) {
+    VkDeviceSize buf_size = sizeof(u16) * 6;
     bool success;
 
-    success = vk_buffer_create(
-        ctx,
-        buf_size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        &obj->indices_staging_buf,
-        &obj->indices_staging_mem
-    );
+    /* --------------------- assign indices--------------------- */
+    ctx->indices_count = 6;
+    ctx->indices = vmalloc(ctx->indices_count * sizeof(u16));
 
-    if (!success) {
-        error("failed to create index staging buffer");
-        return false;
-    }
-
-    success = vkMapMemory(
-        ctx->driver,
-        obj->indices_staging_mem,
-        0,
-        buf_size,
-        0,
-        &obj->indices_gpu_mem
-    ) == VK_SUCCESS;
-
-    if (!success) {
-        error("failed to map index buffer memory");
-        vkDestroyBuffer(ctx->driver, obj->indices_staging_buf, NULL);
-        vkFreeMemory(ctx->driver, obj->indices_staging_mem, NULL);
-        return false;
-    }
+    ctx->indices[0] = 0;
+    ctx->indices[1] = 1;
+    ctx->indices[2] = 2;
+    ctx->indices[3] = 2;
+    ctx->indices[4] = 3;
+    ctx->indices[5] = 0;
+    /* --------------------------------------------------------- */
 
     success = vk_buffer_create(
         ctx,
@@ -1489,25 +1451,19 @@ bool vk_indices_create(RenderContext *ctx, Object *obj) {
         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        &obj->indices_buf,
-        &obj->indices_mem
+        &ctx->indices_buf,
+        &ctx->indices_mem
     );
 
     if (!success) {
         error("failed to create index buffer");
-        vkUnmapMemory(ctx->driver, obj->indices_gpu_mem);
-        vkDestroyBuffer(ctx->driver, obj->indices_staging_buf, NULL);
-        vkFreeMemory(ctx->driver, obj->indices_staging_mem, NULL);
         return false;
     }
 
-    if (!vk_indices_update(ctx, obj)) {
+    if (!vk_indices_update(ctx)) {
         error("failed to update indices");
-        vkUnmapMemory(ctx->driver, obj->indices_gpu_mem);
-        vkDestroyBuffer(ctx->driver, obj->indices_staging_buf, NULL);
-        vkFreeMemory(ctx->driver, obj->indices_staging_mem, NULL);
-        vkDestroyBuffer(ctx->driver, obj->indices_buf, NULL);
-        vkFreeMemory(ctx->driver, obj->indices_mem, NULL);
+        vkDestroyBuffer(ctx->driver, ctx->indices_buf, NULL);
+        vkFreeMemory(ctx->driver, ctx->indices_mem, NULL);
         return false;
     }
 
@@ -1832,6 +1788,84 @@ bool vk_sync_primitives_create(RenderContext *ctx) {
     return true;
 }
 
+bool vk_staging_buffer_create(RenderContext *ctx,
+                              VkBuffer *buf,
+                              VkDeviceMemory *mem,
+                              void **gpu_mem,
+                              VkDeviceSize size) {
+
+    bool success = vk_buffer_create(
+        ctx,
+        size,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        buf,
+        mem
+    );
+
+    if (!success) {
+        error("failed to create staging buffer");
+        return false;
+    }
+
+    if(vkMapMemory(ctx->driver, *mem, 0, size, 0, gpu_mem)) {
+        error("failed to map buffer memory");
+        vkDestroyBuffer(ctx->driver, *buf, NULL);
+        vkFreeMemory(ctx->driver, *mem, NULL);
+        return false;
+    }
+
+    return true;
+}
+
+bool vk_staging_buffers_create(RenderContext *ctx) {
+    bool success = true;
+
+    success |= !vk_staging_buffer_create(
+        ctx,
+        &ctx->player_staging_buf,
+        &ctx->player_staging_mem,
+        &ctx->player_gpu_mem,
+        254 * 254 * sizeof(Vertex)
+    );
+
+    success |= !vk_staging_buffer_create(
+        ctx,
+        &ctx->tile_staging_buf,
+        &ctx->tile_staging_mem,
+        &ctx->tile_gpu_mem,
+        16 * 16 * sizeof(Vertex)
+    );
+
+    success |= !vk_staging_buffer_create(
+        ctx,
+        &ctx->indices_staging_buf,
+        &ctx->indices_staging_mem,
+        &ctx->indices_gpu_mem,
+        6 * sizeof(u16)
+    );
+
+    return success;
+}
+
+void vk_staging_buffers_destroy(RenderContext *ctx) {
+    // destroy staging buffers
+    vkDestroyBuffer(ctx->driver, ctx->indices_staging_buf, NULL);
+    vkDestroyBuffer(ctx->driver, ctx->player_staging_buf, NULL);
+    vkDestroyBuffer(ctx->driver, ctx->tile_staging_buf, NULL);
+
+    // unmap staging buffer memory
+    vkUnmapMemory(ctx->driver, ctx->indices_staging_mem);
+    vkUnmapMemory(ctx->driver, ctx->player_staging_mem);
+    vkUnmapMemory(ctx->driver, ctx->tile_staging_mem);
+
+    // free staging buffer memory
+    vkFreeMemory(ctx->driver, ctx->indices_staging_mem, NULL);
+    vkFreeMemory(ctx->driver, ctx->player_staging_mem, NULL);
+    vkFreeMemory(ctx->driver, ctx->tile_staging_mem, NULL);
+}
+
 void vk_sync_primitives_destroy(RenderContext *ctx) {
     for (u32 idx = 0; idx < MAX_FRAMES_LOADED; idx++) {
         Synchronization *sync = &ctx->sync[idx];
@@ -1842,25 +1876,16 @@ void vk_sync_primitives_destroy(RenderContext *ctx) {
     }
 }
 
-/*
- * GAME IS MADE OUT OF A GRID OF 16x9
- *
- * SO PLAYER NEEDS TO BE A BLOCK
- *
- * HIS WIDTH IS 2 / 16
- * HIS HEIGHT IS 2 / 9
- */
-
 void vk_engine_create(RenderContext *ctx) {
     ctx->frame = 0;
     ctx->object_count = 0;
     ctx->object_alloc_count = 0;
 
     static f32 guy[4][2] = {
-        { -2.0/16.0, -2.0/9.0 },
-        {  2.0/16.0, -2.0/9.0 },
-        {  2.0/16.0,  2.0/9.0 },
-        { -2.0/16.0,  2.0/9.0 }
+        { -1.0/16.0, -1.0/9.0 },
+        {  1.0/16.0, -1.0/9.0 },
+        {  1.0/16.0,  1.0/9.0 },
+        { -1.0/16.0,  1.0/9.0 }
     };
 
     if (!vk_instance_create(ctx))
@@ -1899,6 +1924,12 @@ void vk_engine_create(RenderContext *ctx) {
     if (!vk_sync_primitives_create(ctx))
         panic("failed to create synchronization primitives");
 
+    if (!vk_staging_buffers_create(ctx))
+        panic("failed to create staging buffers");
+
+    if (!vk_indices_create(ctx))
+        panic("failed to create GPU index buffer for a square");
+
     level_map_load(
         ctx,
         "./assets/map_1.csv",
@@ -1911,13 +1942,15 @@ void vk_engine_create(RenderContext *ctx) {
     info("vulkan engine created");
 }
 
-
 // FIXME: layers appear to be unloading twice
 void vk_engine_destroy(RenderContext *ctx) {
     vkDeviceWaitIdle(ctx->driver);
 
     objects_destroy(ctx);
 
+    vk_staging_buffers_destroy(ctx);
+    vkDestroyBuffer(ctx->driver, ctx->indices_buf, NULL);
+    vkFreeMemory(ctx->driver, ctx->indices_mem, NULL);
     vk_sync_primitives_destroy(ctx);
 
     vkFreeCommandBuffers(ctx->driver,
@@ -2008,10 +2041,14 @@ bool vk_record_cmd_buffer(RenderContext *ctx,
             NULL
         );
 
-        vkCmdBindVertexBuffers(cmd_buf, 0, 1, &obj->vertices_buf, offsets);
-        vkCmdBindIndexBuffer(cmd_buf, obj->indices_buf, 0, VK_INDEX_TYPE_UINT16);
+        vkCmdBindIndexBuffer(cmd_buf,
+            ctx->indices_buf,
+            0,
+            VK_INDEX_TYPE_UINT16
+        );
 
-        vkCmdDrawIndexed(cmd_buf, obj->indices_count, 1, 0, 0, 0);
+        vkCmdBindVertexBuffers(cmd_buf, 0, 1, &obj->vertices_buf, offsets);
+        vkCmdDrawIndexed(cmd_buf, ctx->indices_count, 1, 0, 0, 0);
     }
 
     vkCmdEndRenderPass(cmd_buf);

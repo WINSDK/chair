@@ -88,9 +88,12 @@ SDL_Surface *tileset_sprite_load(RenderContext *ctx,
 }
 
 Object *object_alloc(RenderContext *ctx) {
-    // initially allocate 4 objects
+    /* Initially allocate 32 * 18 + 1 objects.
+     *
+     * Enough for a room and a player. */
+
     if (ctx->object_alloc_count == 0) {
-        ctx->object_alloc_count = 100;
+        ctx->object_alloc_count = 32 * 18 + 1;
         ctx->object_count = 1;
 
         ctx->objects = vmalloc(ctx->object_alloc_count * sizeof(Object));
@@ -147,24 +150,8 @@ bool object_from_tile(RenderContext *ctx,
     obj->vertices[3].tex[0] = 0.0;
     obj->vertices[3].tex[1] = 1.0;
 
-    /* --------------------- assign indices--------------------- */
-    obj->indices_count = 6;
-    obj->indices = vmalloc(obj->indices_count * sizeof(u16));
-
-    obj->indices[0] = 0;
-    obj->indices[1] = 1;
-    obj->indices[2] = 2;
-    obj->indices[3] = 2;
-    obj->indices[4] = 3;
-    obj->indices[5] = 0;
-
-    if (!vk_vertices_create(ctx, obj)) {
+    if (!vk_vertices_create(ctx, obj, OBJECT_TILE)) {
         error("failed to create GPU vertices buffer");
-        return false;
-    }
-
-    if (!vk_indices_create(ctx, obj)) {
-        error("failed to create GPU indices buffer");
         return false;
     }
 
@@ -221,24 +208,8 @@ bool object_create(RenderContext *ctx, f32 pos[4][2], const char *img_path) {
     obj->vertices[3].tex[0] = 0.0;
     obj->vertices[3].tex[1] = 1.0;
 
-    /* --------------------- assign indices--------------------- */
-    obj->indices_count = 6;
-    obj->indices = vmalloc(obj->indices_count * sizeof(u16));
-
-    obj->indices[0] = 0;
-    obj->indices[1] = 1;
-    obj->indices[2] = 2;
-    obj->indices[3] = 2;
-    obj->indices[4] = 3;
-    obj->indices[5] = 0;
-
-    if (!vk_vertices_create(ctx, obj)) {
+    if (!vk_vertices_create(ctx, obj, OBJECT_PLAYER)) {
         error("failed to create GPU vertices buffer");
-        return false;
-    }
-
-    if (!vk_indices_create(ctx, obj)) {
-        error("failed to create GPU indices buffer");
         return false;
     }
 
@@ -266,28 +237,11 @@ void object_destroy(RenderContext *ctx, Object *obj) {
     vkFreeMemory(ctx->driver, obj->vertices_mem, NULL);
     vkDestroyBuffer(ctx->driver, obj->vertices_buf, NULL);
 
-    // destroy indices
-    free(obj->indices);
-    vkFreeMemory(ctx->driver, obj->indices_mem, NULL);
-    vkDestroyBuffer(ctx->driver, obj->indices_buf, NULL);
-
     // destroy texture
     vkDestroyImageView(ctx->driver, obj->texture.view, NULL);
     vkDestroyImage(ctx->driver, obj->texture.image, NULL);
     vkFreeMemory(ctx->driver, obj->texture.mem, NULL);
     vkDestroySampler(ctx->driver, obj->texture.sampler, NULL);
-
-    // destroy staging buffers
-    vkDestroyBuffer(ctx->driver, obj->indices_staging_buf, NULL);
-    vkDestroyBuffer(ctx->driver, obj->vertices_staging_buf, NULL);
-
-    // unmap staging buffer memory
-    vkUnmapMemory(ctx->driver, obj->indices_staging_mem);
-    vkUnmapMemory(ctx->driver, obj->vertices_staging_mem);
-
-    // free staging buffer memory
-    vkFreeMemory(ctx->driver, obj->indices_staging_mem, NULL);
-    vkFreeMemory(ctx->driver, obj->vertices_staging_mem, NULL);
 }
 
 /* Destroys all objects at once. */

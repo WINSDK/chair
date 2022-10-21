@@ -23,8 +23,8 @@ static f32 QUIT_REGION[2][2] = {
 };
 
 static f32 ROOM_REGION[2][2] = {
-    { -0.82, -0.92 },
-    {  0.82,  0.70 }
+    { -1.0, -1.0 },
+    {  1.0,  1.0 }
 };
 
 static const u8 *KEYBOARD;
@@ -32,7 +32,9 @@ static const u8 *KEYBOARD;
 /* Returns whether coords are within a square region.
  *
  * region[0] is top-left
- * region[1] is bottom-right */
+ * region[1] is bottom-right 
+ *
+ */
 bool coord_in_region(f32 coords[2], f32 region[2][2]) {
     return coords[0] >= region[0][0] && coords[0] <= region[1][0] &&
            coords[1] >= region[0][1] && coords[1] <= region[1][1];
@@ -63,7 +65,7 @@ void handler_mouse(RenderContext *ctx, Game *state, i32 x, i32 y) {
 }
 
 void handler_keyboard(RenderContext *ctx, Game *game, f64 dt) {
-    f64 speed = 3.0;
+    f64 speed = 5.0;
     f32 vertical = (f32)(KEYBOARD[SDL_SCANCODE_S] - KEYBOARD[SDL_SCANCODE_W]);
     f32 horizontal = (f32)(KEYBOARD[SDL_SCANCODE_D] - KEYBOARD[SDL_SCANCODE_A]);
 
@@ -129,7 +131,7 @@ void render(RenderContext *ctx, Game *game, f64 dt) {
     if (game->dx != 0.0 || game->dy != 0.0) {
         resolve_collisions(player, game);
         object_transform(player, game->dx, game->dy);
-        vk_vertices_update(ctx, player);
+        vk_vertices_update(ctx, player, OBJECT_PLAYER);
 
         game->dx = 0.0;
         game->dy = 0.0;

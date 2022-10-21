@@ -109,36 +109,6 @@ typedef struct {
     /* Reference to the memory in `vertex_memory` */
     VkBuffer vertices_buf;
 
-    /* Memory on the GPU that holds the `indices_staging_buf` */
-    VkDeviceMemory vertices_staging_mem;
-
-    /* Intermediate buffer for writting to the vertices on the GPU */
-    VkBuffer vertices_staging_buf;
-
-    /* Memory on the GPU returned by `vkMapMemory` */
-    void *vertices_gpu_mem;
-
-    /* Offsets into `vertices` */
-    u16 *indices;
-
-    /* Indices into `vertices` on what vertices to draw */
-    u32 indices_count;
-
-    /* Memory on the GPU that holds the `indices` */
-    VkDeviceMemory indices_mem;
-
-    /* Reference to the memory in `indices_memory` */
-    VkBuffer indices_buf;
-
-    /* Memory on the GPU that holds the `indices_staging_buf` */
-    VkDeviceMemory indices_staging_mem;
-
-    /* Intermediate buffer for writting to the indices on the GPU */
-    VkBuffer indices_staging_buf;
-
-    /* Memory on the GPU returned by `vkMapMemory` */
-    void *indices_gpu_mem;
-
     /* Everything related to the object's texture */
     Texture texture;
 } Object;
@@ -245,6 +215,45 @@ typedef struct {
 
     /* Number of entities allocated in `objects` */
     u32 object_alloc_count;
+
+    /* Memory on the GPU that holds a `tile_staging_buf` */
+    VkDeviceMemory tile_staging_mem;
+
+    /* Intermediate buffer for writing 16x16 tile's vertices */
+    VkBuffer tile_staging_buf;
+
+    /* Memory address of `tile_staging_buf` */
+    void *tile_gpu_mem;
+
+    /* Memory on the GPU that holds a `player_staging_buf` */
+    VkDeviceMemory player_staging_mem;
+
+    /* Intermediate buffer for writing player's vertices */
+    VkBuffer player_staging_buf;
+
+    /* Memory address of `player_staging_buf` */
+    void *player_gpu_mem;
+
+    /* Offsets into `vertices` */
+    u16 *indices;
+
+    /* Indices into `vertices` on what vertices to draw */
+    u32 indices_count;
+
+    /* Memory on the GPU that holds the `indices` */
+    VkDeviceMemory indices_mem;
+
+    /* Reference to the memory in `indices_memory` */
+    VkBuffer indices_buf;
+
+    /* Memory on the GPU that holds the `indices_staging_buf` */
+    VkDeviceMemory indices_staging_mem;
+
+    /* Intermediate buffer for writing to the indices on the GPU */
+    VkBuffer indices_staging_buf;
+
+    /* Memory address of `indices_staging_buf` */
+    void *indices_gpu_mem;
 } RenderContext;
 
 typedef struct {
@@ -264,6 +273,11 @@ typedef struct {
     f32 dx, dy;
 } Game;
 
+typedef enum {
+    OBJECT_PLAYER,
+    OBJECT_TILE
+} ObjectType;
+
 void vk_engine_create(RenderContext *ctx);
 void vk_engine_destroy(RenderContext *ctx);
 void vk_engine_render(RenderContext *ctx);
@@ -276,11 +290,11 @@ bool vk_image_from_surface(RenderContext *ctx, Texture *tex, SDL_Surface *img);
 
 bool vk_swapchain_recreate(RenderContext *ctx);
 
-bool vk_vertices_create(RenderContext *ctx, Object *obj);
-bool vk_vertices_update(RenderContext *ctx, Object *obj);
+bool vk_vertices_create(RenderContext *ctx, Object *obj, ObjectType type);
+bool vk_vertices_update(RenderContext *ctx, Object *obj, ObjectType type);
 
-bool vk_indices_create(RenderContext *ctx, Object *obj);
-bool vk_indices_update(RenderContext *ctx, Object *obj);
+bool vk_indices_create(RenderContext *ctx);
+bool vk_indices_update(RenderContext *ctx);
 
 void sdl_renderer_create(RenderContext *ctx);
 void sdl_renderer_destroy(RenderContext *ctx);
@@ -292,9 +306,7 @@ bool level_map_load(RenderContext *ctx,
 SDL_Surface *sdl_load_image(const char *path);
 
 Object *object_find(RenderContext *ctx, const char *ident);
-
 bool object_create(RenderContext *ctx, f32 pos[4][2], const char *img_path);
-
 void object_transform(Object *obj, f32 x, f32 y);
 void objects_recreate(RenderContext *ctx);
 
