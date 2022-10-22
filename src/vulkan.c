@@ -1932,7 +1932,13 @@ void vk_engine_create(RenderContext *ctx) {
 
     level_map_load(
         ctx,
-        "./assets/map_1.csv",
+        "./assets/map_1_Tile Layer 2.csv",
+        "./assets/tileset.bmp"
+    );
+
+    level_map_load(
+        ctx,
+        "./assets/map_1_Tile Layer 1.csv",
         "./assets/tileset.bmp"
     );
 

@@ -88,12 +88,12 @@ SDL_Surface *tileset_sprite_load(RenderContext *ctx,
 }
 
 Object *object_alloc(RenderContext *ctx) {
-    /* Initially allocate 32 * 18 + 3 objects.
+    /* Initially allocate 32 * 18 * 2 + 2 objects.
      *
-     * Enough for a room, a player and an exit menu. */
+     * Enough for a two room's, a player and an exit menu. */
 
     if (ctx->object_alloc_count == 0) {
-        ctx->object_alloc_count = 32 * 18 + 3;
+        ctx->object_alloc_count = 32 * 18 * 2 + 2;
         ctx->object_count = 1;
 
         ctx->objects = vmalloc(ctx->object_alloc_count * sizeof(Object));
@@ -387,6 +387,7 @@ bool level_map_load(RenderContext *ctx,
         if (delim == '\n') {
             y++;
             x = 0;
+            continue;
         }
 
         if (delim == EOF)
