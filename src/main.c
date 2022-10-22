@@ -23,7 +23,7 @@ static f32 QUIT_REGION[2][2] = {
 };
 
 static f32 ROOM_REGION[2][2] = {
-    { -1.0, -1.0 },
+    { -1.0, -1.0 - 1.0/18.0 },
     {  1.0,  1.0 }
 };
 
@@ -56,7 +56,6 @@ void handler_mouse(RenderContext *ctx, Game *state, i32 x, i32 y) {
         );
 
         vk_swapchain_recreate(ctx);
-        objects_recreate(ctx);
         state->fullscreen = !state->fullscreen;
     }
 
@@ -64,18 +63,18 @@ void handler_mouse(RenderContext *ctx, Game *state, i32 x, i32 y) {
         state->quit_game = true;
 }
 
-void handler_keyboard(RenderContext *ctx, Game *game, f64 dt) {
-    f64 speed = 5.0;
-    f32 vertical = (f32)(KEYBOARD[SDL_SCANCODE_S] - KEYBOARD[SDL_SCANCODE_W]);
-    f32 horizontal = (f32)(KEYBOARD[SDL_SCANCODE_D] - KEYBOARD[SDL_SCANCODE_A]);
+void handler_keyboard(RenderContext *ctx, Game *game) {
+    f64 speed = 0.00075;
+    f64 vertical = (f32)(KEYBOARD[SDL_SCANCODE_S] - KEYBOARD[SDL_SCANCODE_W]);
+    f64 horizontal = (f32)(KEYBOARD[SDL_SCANCODE_D] - KEYBOARD[SDL_SCANCODE_A]);
 
     if (vertical != 0.0 && horizontal != 0.0) {
         // sqrt(1.0**2 + 1.0**2) / 2
         speed *= 0.707;
     }
 
-    game->dy += vertical * (f32)(16.0 * speed * dt);
-    game->dx += horizontal * (f32)(9.0 * speed * dt);
+    game->dy += (f32)(vertical * 16.0 * speed);
+    game->dx += (f32)(horizontal * 9.0 * speed);
 }
 
 void handler_event(RenderContext *ctx, Game *game) {
@@ -92,7 +91,7 @@ void handler_event(RenderContext *ctx, Game *game) {
             event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
 
             if (game->menu_open) {
-                object_find_destroy(ctx, "./assets/escape_menu.bmp");
+                object_find_destroy(ctx, HASH("./assets/escape_menu.bmp"));
             } else {
                 object_create(ctx, BG_COORDS, "./assets/escape_menu.bmp");
             }
@@ -123,10 +122,10 @@ void resolve_collisions(Object *obj, Game *game) {
     }
 }
 
-void render(RenderContext *ctx, Game *game, f64 dt) {
-    Object *player = object_find(ctx, "./assets/guy.bmp");
+void render(RenderContext *ctx, Game *game) {
+    Object *player = object_find(ctx, HASH("./assets/guy.bmp"));
 
-    handler_keyboard(ctx, game, dt);
+    handler_keyboard(ctx, game);
 
     if (game->dx != 0.0 || game->dy != 0.0) {
         resolve_collisions(player, game);
@@ -138,19 +137,44 @@ void render(RenderContext *ctx, Game *game, f64 dt) {
     }
 }
 
+#define FRAME_TIME 1000000000 / 75
+
 void event_loop(RenderContext *ctx) {
-    struct timespec time = {};
     Game game = {};
 
     for (;;) {
+        struct timespec start;
+        struct timespec end;
+        struct timespec diff;
+
+        now(&start);
+
         handler_event(ctx, &game);
-        render(ctx, &game, time_elapsed(&time));
+        render(ctx, &game);
         vk_engine_render(ctx);
 
         if (game.quit_game)
             break;
 
-        now(&time);
+        now(&end);
+
+        // calculate the difference between `start` and `end`
+        if ((end.tv_nsec - start.tv_nsec) < 0) {
+            diff.tv_sec = end.tv_sec - start.tv_sec - 1;
+            diff.tv_nsec = 1000000000 + end.tv_nsec - start.tv_nsec;
+        } else {
+            diff.tv_sec = end.tv_sec - start.tv_sec;
+            diff.tv_nsec = end.tv_nsec - start.tv_nsec;
+        }
+
+        diff.tv_nsec = FRAME_TIME - diff.tv_nsec;
+
+        // don't sleep if more than one second has elapsed or if
+        // more than 1/60's of a second has elapsed
+        if (diff.tv_sec != 0 || diff.tv_nsec > FRAME_TIME)
+            continue;
+
+        nanosleep(&diff, NULL);
     }
 }
 

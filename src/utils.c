@@ -137,7 +137,7 @@ f64 time_elapsed(struct timespec *start) {
         diff.tv_nsec = time.tv_nsec - start->tv_nsec;
     }
 
-    return (f64)diff.tv_sec + (f64)diff.tv_nsec * 1.0e-9;
+    return (f64)(diff.tv_sec * 1000000000 + diff.tv_nsec) * 1.0e-9;
 }
 
 /// Reads file and returns NULL if it failed

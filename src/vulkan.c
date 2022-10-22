@@ -1073,7 +1073,7 @@ bool vk_descriptor_layouts_create(RenderContext *ctx) {
     ) == VK_SUCCESS;
 }
 
-#define DESC_POOL_SIZE 32 * 18
+#define DESC_POOL_SIZE 32 * 18 * 3 / 2
 
 bool vk_descriptor_pool_create(RenderContext *ctx) {
     // pool big enough for a sampler

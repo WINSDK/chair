@@ -88,12 +88,12 @@ SDL_Surface *tileset_sprite_load(RenderContext *ctx,
 }
 
 Object *object_alloc(RenderContext *ctx) {
-    /* Initially allocate 32 * 18 + 1 objects.
+    /* Initially allocate 32 * 18 + 3 objects.
      *
-     * Enough for a room and a player. */
+     * Enough for a room, a player and an exit menu. */
 
     if (ctx->object_alloc_count == 0) {
-        ctx->object_alloc_count = 32 * 18 + 1;
+        ctx->object_alloc_count = 32 * 18 + 3;
         ctx->object_count = 1;
 
         ctx->objects = vmalloc(ctx->object_alloc_count * sizeof(Object));
@@ -118,7 +118,7 @@ Object *object_alloc(RenderContext *ctx) {
 bool object_from_tile(RenderContext *ctx,
                       u32 x, u32 y,
                       SDL_Surface *tile,
-                      const char *ident) {
+                      u64 ident) {
 
     f32 block_w = 1.0 / 16.0;
     f32 block_h = 1.0 / 9.0;
@@ -182,7 +182,7 @@ bool object_from_tile(RenderContext *ctx,
 bool object_create(RenderContext *ctx, f32 pos[4][2], const char *img_path) {
     Object *obj = object_alloc(ctx);
 
-    obj->ident = img_path;
+    obj->ident = HASH(img_path);
 
     /* --------------------- assign vertices --------------------- */
     obj->vertices_count = 4;
@@ -253,24 +253,11 @@ void objects_destroy(RenderContext *ctx) {
     info("game entities destroyed");
 }
 
-void objects_recreate(RenderContext *ctx) {
-    for (u32 idx = 0; idx < ctx->object_count; idx++)  {
-        Object *obj = &ctx->objects[idx];
-
-        vkDestroyImageView(ctx->driver, obj->texture.view, NULL);
-        vkDestroyImage(ctx->driver, obj->texture.image, NULL);
-        vkFreeMemory(ctx->driver, obj->texture.mem, NULL);
-
-        vk_image_create(ctx, &obj->texture, obj->ident);
-        vk_descriptor_sets_create(ctx, &obj->texture);
-    }
-}
-
-Object *object_find(RenderContext *ctx, const char *ident) {
+Object *object_find(RenderContext *ctx, u64 ident) {
     Object *obj = NULL;
 
     for (u32 idx = 0; idx < ctx->object_count; idx++)
-        if (strcmp(ctx->objects[idx].ident, ident) == 0)
+        if (ctx->objects[idx].ident == ident)
             obj = &ctx->objects[idx];
 
     return obj;
@@ -279,7 +266,7 @@ Object *object_find(RenderContext *ctx, const char *ident) {
 /* Tries to destroy an object and returns whether or not it succeeded.
  *
  * Copies the last elements of the array into the deleted spot. */
-bool object_find_destroy(RenderContext *ctx, const char *ident) {
+bool object_find_destroy(RenderContext *ctx, u64 ident) {
     Object *obj = object_find(ctx, ident);
 
     if (obj == NULL || ctx->object_count == 0)
@@ -390,7 +377,7 @@ bool level_map_load(RenderContext *ctx,
 
         trace("idx: %d, x: %d, y: %d", idx, x, y);
 
-        if (!object_from_tile(ctx, x, y, tileset[idx], "tile")) {
+        if (!object_from_tile(ctx, x, y, tileset[idx], idx)) {
             level_tileset_destroy(tileset);
             fclose(level);
             error("failed to create object from tile");
