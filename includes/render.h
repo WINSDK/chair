@@ -95,7 +95,7 @@ typedef struct {
  * I feel like the cost of copying over the struct on appends isn't too bad */
 typedef struct {
     /* Unique texture identifier */
-    u64 ident;
+    u32 ident;
 
     /* Vertices of the object to be renderer */
     Vertex *vertices;
@@ -305,11 +305,11 @@ bool level_map_load(RenderContext *ctx,
 
 SDL_Surface *sdl_load_image(const char *path);
 
-Object *object_find(RenderContext *ctx, u64 ident);
 bool object_create(RenderContext *ctx, f32 pos[4][2], const char *img_path);
 void object_transform(Object *obj, f32 x, f32 y);
-
-bool object_find_destroy(RenderContext *ctx, u64 ident);
 void objects_destroy(RenderContext *ctx);
+
+Object *object_find(RenderContext *ctx, u32 ident);
+bool object_find_destroy(RenderContext *ctx, u32 ident);
 
 #endif // RENDER_H_

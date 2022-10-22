@@ -1948,7 +1948,6 @@ void vk_engine_create(RenderContext *ctx) {
     info("vulkan engine created");
 }
 
-// FIXME: layers appear to be unloading twice
 void vk_engine_destroy(RenderContext *ctx) {
     vkDeviceWaitIdle(ctx->driver);
 
@@ -1965,8 +1964,11 @@ void vk_engine_destroy(RenderContext *ctx) {
         ctx->cmd_bufs
     );
 
+    // destroy vertices
     vkDestroyCommandPool(ctx->driver, ctx->cmd_pool, NULL);
     vkDestroyDescriptorPool(ctx->driver, ctx->desc_pool, NULL);
+    free(ctx->indices);
+
     vk_pipeline_destroy(ctx);
     vkDestroyDescriptorSetLayout(ctx->driver, ctx->desc_set_layout, NULL);
     vkDestroyRenderPass(ctx->driver, ctx->render_pass, NULL);

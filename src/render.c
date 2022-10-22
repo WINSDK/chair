@@ -118,7 +118,7 @@ Object *object_alloc(RenderContext *ctx) {
 bool object_from_tile(RenderContext *ctx,
                       u32 x, u32 y,
                       SDL_Surface *tile,
-                      u64 ident) {
+                      u32 ident) {
 
     f32 block_w = 1.0 / 16.0;
     f32 block_h = 1.0 / 9.0;
@@ -253,7 +253,7 @@ void objects_destroy(RenderContext *ctx) {
     info("game entities destroyed");
 }
 
-Object *object_find(RenderContext *ctx, u64 ident) {
+Object *object_find(RenderContext *ctx, u32 ident) {
     Object *obj = NULL;
 
     for (u32 idx = 0; idx < ctx->object_count; idx++)
@@ -266,7 +266,7 @@ Object *object_find(RenderContext *ctx, u64 ident) {
 /* Tries to destroy an object and returns whether or not it succeeded.
  *
  * Copies the last elements of the array into the deleted spot. */
-bool object_find_destroy(RenderContext *ctx, u64 ident) {
+bool object_find_destroy(RenderContext *ctx, u32 ident) {
     Object *obj = object_find(ctx, ident);
 
     if (obj == NULL || ctx->object_count == 0)
