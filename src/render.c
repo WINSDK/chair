@@ -16,11 +16,17 @@ void sdl_renderer_create(RenderContext *ctx) {
         SDL_WINDOW_VULKAN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
     );
 
+    if (!ctx->window)
+        panic("failed to create window: %s", SDL_GetError());
+
     ctx->renderer = SDL_CreateRenderer(
         ctx->window,
         -1,
         SDL_RENDERER_SOFTWARE
     );
+
+    if (!ctx->renderer)
+        panic("failed to create renderer: %s", SDL_GetError());
 
     info(
         "created window with size: %ix%i",
