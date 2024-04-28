@@ -117,9 +117,6 @@ typedef struct {
     /* SDL application state */
     SDL_Window *window;
 
-    /* SDL render related state */
-    SDL_Renderer *renderer;
-
     /* Vulkan API Context */
     VkInstance instance;
 

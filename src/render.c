@@ -19,14 +19,6 @@ void sdl_renderer_create(RenderContext *ctx) {
     if (!ctx->window)
         panic("failed to create window: %s", SDL_GetError());
 
-    ctx->renderer = SDL_CreateRenderer(
-        ctx->window,
-        -1,
-        SDL_RENDERER_SOFTWARE
-    );
-
-    if (!ctx->renderer)
-        panic("failed to create renderer: %s", SDL_GetError());
 
     info(
         "created window with size: %ix%i",
@@ -34,15 +26,10 @@ void sdl_renderer_create(RenderContext *ctx) {
         display_info.h * 2 / 3
     );
 
-    SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
-    SDL_RenderClear(ctx->renderer);
-    SDL_RenderPresent(ctx->renderer);
-
     info("SDL2 created");
 }
 
 void sdl_renderer_destroy(RenderContext *ctx) {
-    SDL_DestroyRenderer(ctx->renderer);
     SDL_DestroyWindow(ctx->window);
     SDL_Quit();
 

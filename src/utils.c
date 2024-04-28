@@ -7,6 +7,14 @@
 
 #include "utils.h"
 
+void breek() {
+#if defined(__x86_64__) || defined(_M_X64)
+            __asm__("int3");
+#elif defined(__aarch64__) || defined(_M_ARM64)
+            __asm__("brk #1");
+#endif
+}
+
 static atomic_uint LEVEL = LOG_INFO;
 
 LogLevel get_log_level() {
@@ -53,7 +61,7 @@ void __logger(LogLevel lvl, const char *fmt, ...) {
 
     if (lvl == LOG_PANIC) {
         if (get_log_level() == LOG_TRACE)
-            __asm__("int3");
+            breek();
 
         exit(1);
     }

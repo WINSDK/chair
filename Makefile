@@ -9,6 +9,10 @@ CFLAGS  = -std=c11 -fwrapv \
 		  -Wstring-compare \
 		  -Wuninitialized
 
+ifeq ($(shell uname),Darwin)
+CFLAGS += -fbracket-depth=512
+endif
+
 CFLAGS += `pkg-config --cflags vulkan` \
 		  `pkg-config --cflags sdl2`
 
@@ -68,7 +72,7 @@ target/debug/main: target/debug $(DEB_OBJS) $(SHADERS)
 
 target/release/main: target/release $(REL_OBJS) $(SHADERS)
 	$(CC) $(REL_OBJS) $(LDFLAGS) -o $@
-	strip --strip-all $@
+	strip $@
 
 target/sanitize/%.o: src/%.c
 	$(CC) $(CFLAGS) -Iincludes -o $@ -c $<

@@ -86,6 +86,8 @@ void __array(const char **msgs, u32 len, const char *format, ...);
         "[%s:%d]\x1B[0m " fmt, __FILE__, __LINE__, ##__VA_ARGS__  \
     )
 
+void breek();
+
 
 /* --------------------- hashing macro --------------------- */
 

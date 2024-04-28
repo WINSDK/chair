@@ -9,17 +9,14 @@ const char **get_required_extensions(SDL_Window *window, u32 *count) {
     const char **extensions;
 
     if (!SDL_Vulkan_GetInstanceExtensions(window, count, NULL)) {
-        error("failed to retrieve all required extensions: '%s'",
-              SDL_GetError());
-
+        error("failed to retrieve all required extensions: '%s'", SDL_GetError());
         return NULL;
     }
 
     extensions = vmalloc((*count + 2) * sizeof(char *));
 
     if (!SDL_Vulkan_GetInstanceExtensions(window, count, extensions)) {
-        error("failed to retrieve all required extensions: '%s'",
-              SDL_GetError());
+        error("failed to retrieve all required extensions: '%s'", SDL_GetError());
         return NULL;
     }
 
@@ -263,7 +260,7 @@ vk_debug_handler(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
         printf("\x1b[1;38;5;1m[vulkan]\e[m %s\n", callback_data->pMessage);
 
         if (get_log_level() == LOG_TRACE)
-            __asm__("int3");
+            breek();
 
         //exit(1);
     }
@@ -504,7 +501,7 @@ bool vk_swapchain_create(RenderContext *ctx) {
     vk_fail = vkGetSwapchainImagesKHR(
         ctx->driver,
         chain->data,
-        &chain->format_count,
+        &chain->image_count,
         NULL
     );
 
@@ -517,7 +514,7 @@ bool vk_swapchain_create(RenderContext *ctx) {
     vk_fail = vkGetSwapchainImagesKHR(
         ctx->driver,
         chain->data,
-        &chain->format_count,
+        &chain->image_count,
         chain->images
     );
 
@@ -717,7 +714,7 @@ bool vk_instance_create(RenderContext *ctx) {
     };
 
 #ifdef __APPLE__
-    create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    instance_create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 #endif
 
     VkDebugUtilsMessengerCreateInfoEXT debug_create_info = {
